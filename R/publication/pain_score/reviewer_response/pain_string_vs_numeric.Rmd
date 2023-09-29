@@ -1,0 +1,81 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r, echo=F, results='hide', message=F, warning=F}
+rm(list=ls())
+library(tidyverse)
+library(magrittr)
+library(readxl)
+library(cowplot)
+
+results = readRDS("data/multisite_pain_table.rds")
+
+combined_data = readRDS("data/multisite_data.rds")
+valid = apply(!is.na(combined_data$outcomes), 1, any)
+
+processed_data = read_excel("data/pain_prediction/pain_prediction_processed_data.xlsx")
+outcomes = processed_data %>% dplyr::select(PostopPainDay0, PostopPainDay1, PostopPainDay2, PostopPainDay3, PostopPainDay4)
+prospective_has_outcomes = apply(outcomes, 1, function(x) any(!is.na(x)))
+processed_data = processed_data[prospective_has_outcomes,]
+```
+
+```{r, echo=F}
+retrospective_pain = results$retrospective %>% filter(is.element(log_id, combined_data$log_id[valid])) %>% na.omit
+prospective_pain = results$prospective %>% filter(is.element(log_id, processed_data$LogID)) %>% na.omit
+```
+
+```{r, echo=F}
+characteristics = lapply(seq(from=0, to=4), function(x) {
+    current_retrospective = retrospective_pain %>% dplyr::filter(surgery_offset==x)
+    current_string = current_retrospective %>% dplyr::filter(numeric_vs_string == "Pain String")
+    current_number = current_retrospective %>% dplyr::filter(numeric_vs_string == "Pain Number")
+    
+    data.frame(
+        day=x,
+        n = dim(current_retrospective)[1],
+        n_string = dim(current_string)[1],
+        n_number = dim(current_number)[1],
+        n_subjects = length(unique(current_retrospective$log_id)),
+        n_subjects_string = length(unique(current_string$log_id)),
+        n_subjects_number = length(unique(current_number$log_id))
+    )
+}) %>% do.call(rbind, .)
+
+
+```
+
+
+```{r, echo=F}
+retrospective_plot = ggplot(retrospective_pain, aes(x=value, fill=numeric_vs_string)) + geom_histogram(aes(y=after_stat(density)/2), binwidth=0.5, position="dodge") +
+    scale_x_continuous(breaks=seq(from=0, to=10)) +
+    scale_y_continuous(breaks=seq(from=0, to=1, by=0.1)) +
+    xlab("Pain Score") + ylab("Density") +
+    labs(fill="Type") + 
+    theme(panel.grid.minor.x = element_blank()) +
+    ggtitle("Retrospective")
+```
+
+```{r, echo=F}
+prospective_plot = ggplot(prospective_pain, aes(x=value, fill=numeric_vs_string)) + geom_histogram(aes(y=after_stat(density)/2), binwidth=0.5, position="dodge") +
+    scale_x_continuous(breaks=seq(from=0, to=10)) +
+    scale_y_continuous(breaks=seq(from=0, to=1, by=0.1)) +
+    xlab("Pain Score") + ylab("Density") +
+    labs(fill="Type") +
+    theme(panel.grid.minor.x = element_blank()) +
+    ggtitle("Prospective")
+```
+
+```{r, echo=F, fig.width=6.5}
+plot_grid(
+    plot_grid(
+        retrospective_plot + theme(legend.position="none"),
+        prospective_plot + theme(legend.position="none"),
+        nrow=1, labels="AUTO"
+    ),
+    get_legend(retrospective_plot + theme(legend.position="bottom")),
+    nrow=2, rel_heights=c(11, 1)
+)
+```
+

@@ -1,0 +1,55 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r, results='hide', echo=F, message=F, warning=F}
+library(tidyverse)
+library(magrittr)
+library(cowplot)
+
+all_data = readRDS("data/all_data.rds")
+opioid_data = readRDS("data/total_opioid_dosages.rds")
+prospective_data = read.csv("data/calced_fen_hydro_dose.csv")
+log_ids = data.frame(log_id = all_data$log_id)
+
+merged_fentanyl = dplyr::left_join(log_ids, opioid_data$fentanyl, by="log_id") %>% replace_na(list(dose=0))
+merged_hydromorphone = dplyr::left_join(log_ids, opioid_data$hydromorphone, by="log_id") %>% replace_na(list(dose=0))
+
+combined_data = data.frame(
+    fentanyl = c(merged_fentanyl$dose, prospective_data$fentanyl_mcg),
+    hydromorphone = c(merged_hydromorphone$dose*1000, prospective_data$hydromorphone_mcg),
+    group = c(rep("retrospective", dim(merged_fentanyl)[1]), rep("prospective", dim(prospective_data)[1]))
+)
+```
+
+```{r, echo=F}
+fentanyl_plot = ggplot(combined_data, aes(x=fentanyl, fill=group)) +
+    geom_histogram(aes(y=after_stat(density)*50), position="identity", alpha=0.5, binwidth=50) +
+    coord_cartesian(xlim=c(0, 600)) +
+    xlab("Total intraop fentanyl (mcg)") + ylab("Density") +
+    labs(fill="Cohort") +
+    theme_minimal()
+
+hydromorphone_plot = ggplot(combined_data, aes(x=hydromorphone, fill=group)) +
+    geom_histogram(aes(y=after_stat(density)*250), position="identity", alpha=0.5, binwidth=250) +
+    coord_cartesian(xlim=c(0, 3000)) +
+    xlab("Total intraop hydromorphone (mcg)") + ylab("Density") +
+    theme_minimal()
+```
+
+
+```{r, echo=F}
+figure = plot_grid(
+    plot_grid(fentanyl_plot + theme(legend.position="none"), hydromorphone_plot + theme(legend.position ="none"), nrow=1),
+    get_legend(fentanyl_plot+theme(legend.position="bottom")),
+    ncol=1, rel_heights = c(10, 1)
+)
+
+figure
+
+
+ggsave("data/figures/total_dosage.tiff", plot=figure, dpi=300)
+ggsave("data/figures/total_dosage.pdf", plot=figure, dpi=300)
+```
+

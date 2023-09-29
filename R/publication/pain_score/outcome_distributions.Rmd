@@ -1,0 +1,62 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r, echo=F, results='hide'}
+library(tidyverse)
+library(magrittr)
+library(readxl)
+library(cowplot)
+library(matrixStats)
+library(flextable)
+
+combined_data = readRDS("data/multisite_data.rds")
+processed_data = read_excel("data/pain_prediction/pain_prediction_processed_data.xlsx")
+
+prospective_outcomes = processed_data %>% dplyr::select(PostopPainDay0, PostopPainDay1, PostopPainDay2, PostopPainDay3, PostopPainDay4) %>% as.matrix
+```
+
+```{r, echo=F, fig.width=6, fig.height=8}
+plot_data = lapply(seq_len(5), function(i) {
+    data.frame(
+        max_pain = c(combined_data$outcomes[,i], processed_data[[sprintf("PostopPainDay%d", i-1)]]),
+        group = c(rep("Retrospective", dim(combined_data$outcomes)[1]), rep("Prospective", dim(processed_data)[1]))
+    )
+})
+
+plots = lapply(seq_len(5), function(i) {
+    ggplot(plot_data[[i]], aes(x=max_pain, fill=group)) + geom_histogram(aes(y=after_stat(density)/2), position="dodge", binwidth=0.5) +
+        scale_x_continuous(breaks=seq(from=0, to=10)) +
+        ggtitle(sprintf("Postop Day %d", i-1)) +
+        xlab("Max pain score") + 
+        ylab("Density") +
+        theme_minimal()
+})
+
+plots_nolegend = lapply(plots, function(x) x+theme(legend.position="none"))
+
+plot_grid(
+    plot_grid(plotlist=plots_nolegend, ncol=1, labels="AUTO"),
+    get_legend(plots[[1]] + theme(legend.position="bottom") + labs(fill="Cohort")),
+    nrow=2, rel_heights = c(50, 1)
+)
+
+```
+
+```{r, echo=F}
+# Table of averages
+
+data.frame(
+    day = seq(from=0, to=4),
+    median = colMedians(combined_data$outcomes, na.rm=T),
+    lower = colQuantiles(combined_data$outcomes, probs=0.25, na.rm=T),
+    upper = colQuantiles(combined_data$outcomes, probs=0.75, na.rm=T),
+    mean = colMeans(combined_data$outcomes, na.rm=T),
+    median_prospective = colMedians(prospective_outcomes, na.rm=T),
+    lower_prospective = colQuantiles(prospective_outcomes, probs=0.25, na.rm=T),
+    upper_prospective = colQuantiles(prospective_outcomes, probs=0.75, na.rm=T),
+    mean_prospective = colMeans(prospective_outcomes, na.rm=T)
+) %>% flextable %>% set_table_properties(layout="autofit", width=1)
+```
+

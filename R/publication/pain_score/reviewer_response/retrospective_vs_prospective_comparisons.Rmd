@@ -1,0 +1,48 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r, echo=F, results='hide', message=F, warning=F}
+library(tidyverse)
+library(magrittr)
+library(flextable)
+library(readxl)
+
+combined_data = readRDS("data/multisite_data.rds")
+valid = apply(!is.na(combined_data$outcomes), 1, any)
+combined_table = combined_data$demographics[valid,]
+combined_outcomes = combined_data$outcomes[valid,]
+
+processed_data = read_excel("data/pain_prediction/pain_prediction_processed_data.xlsx")
+prospective_outcomes = processed_data %>% dplyr::select(PostopPainDay0, PostopPainDay1, PostopPainDay2, PostopPainDay3, PostopPainDay4)
+prospective_has_outcomes = apply(prospective_outcomes, 1, function(x) any(!is.na(x)))
+processed_data = processed_data[prospective_has_outcomes,]
+prospective_outcomes = prospective_outcomes[prospective_has_outcomes,]
+```
+
+```{r}
+# Compare distribution in surgery service - Chi-Squared test?
+retrospective_service = apply(combined_table[,11:39], 1, function(x) which(x==1))
+prospective_service = sapply(processed_data$ServiceDSC, function(x) which(x==combined_data$service_levels))
+
+service = c(retrospective_service, prospective_service) %>% 
+    factor(levels=seq_along(combined_data$service_levels), labels=combined_data$service_levels)
+cohort = c(rep("Retrospective", length(retrospective_service)), rep("Prospective", length(prospective_service))) %>%
+    factor(levels=c("Retrospective", "Prospective"))
+
+chisq.test(cohort, service)
+
+# Distribution of outcomes: kruskal test?
+# retrospective_outcomes = lapply(seq_len(5), function(x) combined_outcomes[,x])
+# prospective_outcomes = lapply(seq_len(5), function(x) outcomes[,x])
+
+outcomes = lapply(seq_len(5), function(x) c(combined_outcomes[,x], prospective_outcomes[[x]]) %>%
+                      factor(levels=seq(from=0, to=10), ordered=T))
+
+# kruskal.test(cohort, outcomes[[1]])
+
+tests = sapply(seq_len(5), function(x) chisq.test(cohort, outcomes[[x]]))
+chisq.test(cohort, outcomes[[2]])
+```
+

@@ -1,0 +1,230 @@
+---
+title: "Synthetic patients"
+output: word_document
+---
+
+```{r, echo=F, warning=F, results='hide', message=F}
+library(tidyverse)
+library(magrittr)
+library(flextable)
+library(matrixStats)
+library(readxl)
+
+source("R/functions/map_cpt_icd_descriptions.R")
+
+patients = readRDS("data/pain_synthetic_patients.rds")
+results = readRDS("data/results/pain_bootstrap_synthetic_all.rds")
+
+code_data = readRDS("data/multisite_icd_cpt.rds")
+
+icd_descriptions = read_excel("data/icd_descriptions.xlsx")
+cpt_descriptions = read_excel("data/cleaned_cpt_descriptions.xlsx") %>% mutate(CPTCD=as.character(CPTCD), CPTDSC=CleanedCPTDSC)
+
+all_codes = patients$codes %>% do.call(c, .)
+codes = patients$codes
+descriptions = map_cpt_icd_descriptions(all_codes, icd_descriptions, cpt_descriptions)
+```
+
+
+```{r, echo=F, warning=F, results='hide', message=F}
+# Confidence bounds on predictions
+pain_day_0 = colMeans(results$pred[,,1])*10
+pain_day_0_ci = colQuantiles(results$pred[,,1], probs=c(0.025, 0.975))*10
+pain_day_0_ci[pain_day_0_ci<0] = 0
+
+
+pain_day_1 = colMeans(results$pred[,,2])*10
+pain_day_1_ci = colQuantiles(results$pred[,,2], probs=c(0.025, 0.975))*10
+pain_day_1_ci[pain_day_1_ci<0] = 0
+
+pain_day_2 = colMeans(results$pred[,,3])*10
+pain_day_2_ci = colQuantiles(results$pred[,,3], probs=c(0.025, 0.975))*10
+pain_day_2_ci[pain_day_2_ci<0] = 0
+
+pain_day_3 = colMeans(results$pred[,,4])*10
+pain_day_3_ci = colQuantiles(results$pred[,,4], probs=c(0.025, 0.975))*10
+pain_day_3_ci[pain_day_3_ci<0] = 0
+
+pain_day_4 = colMeans(results$pred[,,5])*10
+pain_day_4_ci = colQuantiles(results$pred[,,5], probs=c(0.025, 0.975))*10
+pain_day_4_ci[pain_day_4_ci<0] = 0
+
+```
+
+# Prediction table
+```{r, echo=F}
+prediction_table = data.frame(
+    patients = seq_len(dim(patients$sequences)[1]),
+    day0 = sprintf("%.2f (%.2f, %.2f)", pain_day_0, pain_day_0_ci[,1], pain_day_0_ci[,2]),
+    day1 = sprintf("%.2f (%.2f, %.2f)", pain_day_1, pain_day_1_ci[,1], pain_day_1_ci[,2]),
+    day2 = sprintf("%.2f (%.2f, %.2f)", pain_day_2, pain_day_2_ci[,1], pain_day_2_ci[,2]),
+    day3 = sprintf("%.2f (%.2f, %.2f)", pain_day_3, pain_day_3_ci[,1], pain_day_3_ci[,2]),
+    day4 = sprintf("%.2f (%.2f, %.2f)", pain_day_4, pain_day_4_ci[,1], pain_day_4_ci[,2])
+)
+
+colnames(prediction_table) = c("Patient", "Day 0", "Day 1", "Day 2", "Day 3", "Day 4")
+
+prediction_table %>% flextable %>% set_table_properties(layout="autofit", width=1)
+```
+
+# Full patient characteristics
+```{r, echo=F}
+pad = function(x, n) c(x, rep(NA, n-length(x)))
+
+patient_data = patients$patients %>% select(age, gender, weight, height, race, preop_pain, surgery_service, surgery_urgency, inpatient_vs_ambulatory)
+
+
+full_table = data.frame(
+    statistic = c(
+        "Age (years)", "Sex", "Weight (kg)", "Height (m)", "Race", "Preop Pain Score", "Surgery Service", "Surgery Urgency", "Inpatient/Outpatient", 
+        "Surgery (CPT)", "Chronic pain (G89.4)", "Tobacco use (Z72.0)", "Fibromialgia (M79.7)",
+        "Sleep disorder (G47.9)", "Depression (F32.A)", "Spinal fusion (M43.20)", "Opioid dependence (F11.29)",
+        "Hypercholesterolemia (E78.00)", "Hypertension (I10)",
+        "Cyst and mucocele of nose and nasal sinus (J34.1)", "Hypothyroidism (E03.9)",
+        "Predicted Max Pain (Postop Day 0)", "Predicted Max Pain (Postop Day 1)",  "Predicted Max Pain (Postop Day 2)", 
+        "Predicted Max Pain (Postop Day 3)", "Predicted Max Pain (Postop Day 4)"
+    ),
+    patient_1 = c(41, "Female", 65, 1.59, "White", 5, "Orthopedic Surgery", "Elective", "Inpatient",
+                  "Arthodesis, anterior discectomy and interbody fusion (22552)",
+                  "X", "X", "", "X", "", "X", "",
+                  "", "", "", "",
+                  sprintf("%s (%s, %s)",
+                          format(pain_day_0[1], nsmall=2, digits=2),
+                          format(pain_day_0_ci[1,1], nsmall=2, digits=2),
+                          format(pain_day_0_ci[1,2], nsmall=2, digits=2)),
+                  sprintf("%s (%s, %s)",
+                          format(pain_day_1[1], nsmall=2, digits=2),
+                          format(pain_day_1_ci[1,1], nsmall=2, digits=2),
+                          format(pain_day_1_ci[1,2], nsmall=2, digits=2)),
+                  sprintf("%s (%s, %s)",
+                          format(pain_day_2[1], nsmall=2, digits=2),
+                          format(pain_day_2_ci[1,1], nsmall=2, digits=2),
+                          format(pain_day_2_ci[1,2], nsmall=2, digits=2)),
+                  sprintf("%s (%s, %s)",
+                          format(pain_day_3[1], nsmall=2, digits=2),
+                          format(pain_day_3_ci[1,1], nsmall=2, digits=2),
+                          format(pain_day_3_ci[1,2], nsmall=2, digits=2)),
+                  sprintf("%s (%s, %s)",
+                          format(pain_day_4[1], nsmall=2, digits=2),
+                          format(pain_day_4_ci[1,1], nsmall=2, digits=2),
+                          format(pain_day_4_ci[1,2], nsmall=2, digits=2))
+                  ),
+    patient_2 = c(74, "Male", 74, 1.68, "Black", 0, "Urology", "Elective", "Outpatient",
+                  "Cystoscopy (52260)",
+                  "", "X", "", "", "", "", "X",
+                  "X", "X", "", "",
+                  sprintf("%s (%s, %s)",
+                          format(pain_day_0[2], nsmall=2, digits=2),
+                          format(pain_day_0_ci[2,1], nsmall=2, digits=2),
+                          format(pain_day_0_ci[2,2], nsmall=2, digits=2)),
+                  sprintf("%s (%s, %s)",
+                          format(pain_day_1[2], nsmall=2, digits=2),
+                          format(pain_day_1_ci[2,1], nsmall=2, digits=2),
+                          format(pain_day_1_ci[2,2], nsmall=2, digits=2)),
+                  sprintf("%s (%s, %s)",
+                          format(pain_day_2[2], nsmall=2, digits=2),
+                          format(pain_day_2_ci[2,1], nsmall=2, digits=2),
+                          format(pain_day_2_ci[2,2], nsmall=2, digits=2)),
+                  sprintf("%s (%s, %s)",
+                          format(pain_day_3[2], nsmall=2, digits=2),
+                          format(pain_day_3_ci[2,1], nsmall=2, digits=2),
+                          format(pain_day_3_ci[2,2], nsmall=2, digits=2)),
+                  sprintf("%s (%s, %s)",
+                          format(pain_day_4[2], nsmall=2, digits=2),
+                          format(pain_day_4_ci[2,1], nsmall=2, digits=2),
+                          format(pain_day_4_ci[2,2], nsmall=2, digits=2))
+                 ),
+    patient_3 = c(58, "Female", 79, 1.55, "Asian", 2, "Otolaryngology", "Non-urgent", "Inpatient",
+                  "Nasal endoscopy (31255)",
+                  "", "", "X", "", "X", "", "",
+                  "", "", "X", "X",
+                  sprintf("%s (%s, %s)",
+                          format(pain_day_0[3], nsmall=2, digits=2),
+                          format(pain_day_0_ci[3,1], nsmall=2, digits=2),
+                          format(pain_day_0_ci[3,2], nsmall=2, digits=2)),
+                  sprintf("%s (%s, %s)",
+                          format(pain_day_1[3], nsmall=2, digits=2),
+                          format(pain_day_1_ci[3,1], nsmall=2, digits=2),
+                          format(pain_day_1_ci[3,2], nsmall=2, digits=2)),
+                  sprintf("%s (%s, %s)",
+                          format(pain_day_2[3], nsmall=2, digits=2),
+                          format(pain_day_2_ci[3,1], nsmall=2, digits=2),
+                          format(pain_day_2_ci[3,2], nsmall=2, digits=2)),
+                  sprintf("%s (%s, %s)",
+                          format(pain_day_3[3], nsmall=2, digits=2),
+                          format(pain_day_3_ci[3,1], nsmall=2, digits=2),
+                          format(pain_day_3_ci[3,2], nsmall=2, digits=2)),
+                  sprintf("%s (%s, %s)",
+                          format(pain_day_4[3], nsmall=2, digits=2),
+                          format(pain_day_4_ci[3,1], nsmall=2, digits=2),
+                          format(pain_day_4_ci[3,2], nsmall=2, digits=2))
+                  )
+)
+
+colnames(full_table) = c("Characteristic", "Patient 1", "Patient 2", "Patient 3")
+
+full_table %>% flextable %>% bold(part="header") %>% vline_left() %>% vline_right() %>%
+    hline(i=c(9, 21)) %>% set_table_properties(layout="autofit", width=1)
+```
+
+# Bootstrap results
+```{r, echo=F}
+mean_weights = apply(results$weights, c(2,3), mean)
+quantiles = c(0.025, 0.5, 0.975)
+
+# For each patient
+generate_table = function(index) {
+    codes = code_data$pruned_vocab$term[patients$sequences[index,]] 
+    descriptions = codes %>% map_cpt_icd_descriptions(icd_descriptions, cpt_descriptions)
+    weights = mean_weights[index,seq_along(codes)]
+    
+    pain_change = function(code_index, day_index) {
+        bootstrap_change = (results$pred[,index,day_index]-results$counterfactuals[,index,code_index,day_index])*10
+        return(
+            quantile(bootstrap_change, quantiles)[c(2,1,3)] %>% round(2) %>% as.list %>% do.call(function(...) sprintf("%.2f (%.2f, %.2f)", ...), .)
+        )
+    }
+    
+    result = data.frame(
+        codes = codes %>% str_replace_all("_", " ") %>% str_to_upper(),
+        descriptions = descriptions,
+        weights = weights %>% round(4),
+        day_0_delta = sapply(seq_along(codes), function(i) pain_change(i,1)),
+        day_1_delta = sapply(seq_along(codes), function(i) pain_change(i,2)),
+        day_2_delta = sapply(seq_along(codes), function(i) pain_change(i,3)),
+        day_3_delta = sapply(seq_along(codes), function(i) pain_change(i,4)),
+        day_4_delta = sapply(seq_along(codes), function(i) pain_change(i,5))
+    ) %>% arrange(-weights) %>%
+        rename("Code"="codes","Description"="descriptions","Attention Weight"="weights",
+               "ΔDay 0"="day_0_delta", "ΔDay 1"="day_1_delta", "ΔDay 2"="day_2_delta", "ΔDay 3"="day_3_delta", "ΔDay 4"="day_4_delta")
+    return(result)
+}
+```
+
+```{r, echo=F}
+n = dim(patients$sequences)[1]
+tables = lapply(seq_len(n), generate_table)
+
+combined_table = data.frame(
+    sprintf(
+        "%s %s", 
+        lapply(seq_len(n), function(x) c(sprintf("Patient %d", x), tables[[x]]$Code)) %>% do.call(c, .),
+        lapply(seq_len(n), function(x) c("", str_c("(", tables[[x]]$Description, ")"))) %>% do.call(c, .)), 
+    lapply(seq_len(n), function(x) c(NA, tables[[x]]$`Attention Weight`)) %>% do.call(c, .), 
+    lapply(seq_len(n), function(x) c(prediction_table$`Day 0`[x], tables[[x]]$`ΔDay 0`)) %>% do.call(c, .),
+    lapply(seq_len(n), function(x) c(prediction_table$`Day 1`[x], tables[[x]]$`ΔDay 1`)) %>% do.call(c, .),
+    lapply(seq_len(n), function(x) c(prediction_table$`Day 2`[x], tables[[x]]$`ΔDay 2`)) %>% do.call(c, .),
+    lapply(seq_len(n), function(x) c(prediction_table$`Day 3`[x], tables[[x]]$`ΔDay 3`)) %>% do.call(c, .),
+    lapply(seq_len(n), function(x) c(prediction_table$`Day 4`[x], tables[[x]]$`ΔDay 4`)) %>% do.call(c, .)
+)
+
+colnames(combined_table) = c("Description", "Attention Weight", "ΔDay 0", "ΔDay 1", "ΔDay 2", "ΔDay 3", "ΔDay 4")
+
+hline_indices = c(which(is.na(combined_table$`Attention Weight`)), which(is.na(combined_table$`Attention Weight`))-1)
+hline_indices = hline_indices[hline_indices>0]
+
+combined_table %>% flextable() %>% bold(i=which(is.na(combined_table$`Attention Weight`))) %>% 
+    set_table_properties(layout="autofit", width=1) %>% fontsize(size=9, part='all') %>%
+    vline_left() %>% vline_right() %>% hline(i=hline_indices)
+```
+

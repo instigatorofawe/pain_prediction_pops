@@ -1,0 +1,292 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r, echo=F, results='hide', warning=F, message=F}
+library(tidyverse)
+library(magrittr)
+library(cowplot)
+library(scales)
+library(flextable)
+
+combined_data = readRDS("data/multisite_data.rds")
+valid = apply(!is.na(combined_data$outcomes), 1, any)
+combined_table = combined_data$demographics[valid,]
+outcomes = combined_data$outcomes[valid,]
+inpatient = combined_table[,43]==1
+
+pain_frequency = readRDS("data/multisite_pain_frequency.rds")
+multisite_data = readRDS("data/multisite_data.rds")
+
+processed_data = read_excel("data/pain_prediction/pain_prediction_processed_data.xlsx")
+prospective_outcomes = processed_data %>% dplyr::select(PostopPainDay0, PostopPainDay1, PostopPainDay2, PostopPainDay3, PostopPainDay4)
+prospective_has_outcomes = apply(prospective_outcomes, 1, function(x) any(!is.na(x)))
+processed_data = processed_data[prospective_has_outcomes,]
+prospective_outcomes = as.matrix(prospective_outcomes[prospective_has_outcomes,])
+```
+
+```{r, echo=F}
+pain_frequency_long = lapply(
+    seq_len(5), function(i) {
+        inpatient_obs = pain_frequency$retrospective[inpatient,i]
+        inpatient_obs = inpatient_obs[inpatient_obs>0]
+        
+        outpatient_obs = pain_frequency$retrospective[!inpatient,i]
+        outpatient_obs = outpatient_obs[outpatient_obs>0]
+        
+        prospective_obs = pain_frequency$prospective[,i]
+        prospective_obs = prospective_obs[prospective_obs>0]
+        
+        if (i == 1) {
+            data.frame(
+               day = sprintf("Postop day %d", i-1),
+               Group = c("Retrospective (inpatient)", "Retrospective (outpatient)", "Prospective"),
+               n_obs = c(
+                   sprintf("%d (%d, %d)", median(inpatient_obs), quantile(inpatient_obs,probs=0.25), quantile(inpatient_obs, probs=0.75)),
+                   sprintf("%d (%d, %d)", median(outpatient_obs), quantile(outpatient_obs,probs=0.25), quantile(outpatient_obs, probs=0.75)),
+                   sprintf("%d (%d, %d)", median(prospective_obs), quantile(prospective_obs,probs=0.25), quantile(prospective_obs, probs=0.75))
+               )
+            )
+        } else {
+            
+            data.frame(
+               day = sprintf("Postop day %d", i-1),
+               Group = c("Retrospective (inpatient)", "Retrospective (outpatient)", "Prospective"),
+               n_obs = c(
+                   sprintf("%d (%d, %d)", median(inpatient_obs), quantile(inpatient_obs,probs=0.25), quantile(inpatient_obs, probs=0.75)),
+                   NA,
+                   # sprintf("%d (%d, %d)", median(outpatient_obs), quantile(outpatient_obs,probs=0.25), quantile(outpatient_obs, probs=0.75)),
+                   sprintf("%d (%d, %d)", median(prospective_obs), quantile(prospective_obs,probs=0.25), quantile(prospective_obs, probs=0.75))
+               )
+            )
+        }
+    }
+) %>% do.call(rbind, .)
+
+pain_frequency_long %>% pivot_wider(names_from=day, values_from=n_obs) %>%
+    flextable %>% set_table_properties(layout="autofit", width=1) %>%
+    vline_left %>% vline_right
+```
+
+```{r, echo=F}
+last_obs = apply(prospective_outcomes, 1, function(x) max(which(!is.na(x))))
+
+
+last_obs_table = lapply(seq_len(5), function(x) {
+    lapply(seq_len(x), function(y) {
+        data.frame(
+            day=y,
+            last_obs=x-1,
+            mean=mean(prospective_outcomes[last_obs==x,y],na.rm=T),
+            sd=sd(prospective_outcomes[last_obs==x,y],na.rm=T)
+        )
+    }) %>% do.call(rbind, .)
+}) %>% do.call(rbind, .)
+
+last_obs_table$last_obs %<>% factor
+
+prospective_plot = ggplot(last_obs_table, aes(x=day-1, y=mean, color=last_obs)) + geom_point() + geom_line() +
+    geom_pointrange(data=last_obs_table%>%filter(last_obs==0), mapping=aes(ymin=mean-sd, ymax=mean+sd)) +
+    geom_ribbon(aes(ymin=mean-sd, ymax=mean+sd, fill=last_obs), alpha=0.2, linetype=0) +
+    scale_y_continuous(breaks=seq(from=0, to=10), limits=c(0, 10)) +
+    xlab("Postoperative Day") + ylab("Pain score") +
+    ggtitle("Prospective")
+```
+
+
+```{r, echo=F}
+# Compute average trajectories
+last_obs = apply(outcomes, 1, function(x) max(which(!is.na(x))))
+
+last_obs_table = lapply(seq_len(5), function(x) {
+    lapply(seq_len(x), function(y) {
+        data.frame(
+            day=y,
+            last_obs=x-1,
+            mean=mean(outcomes[last_obs==x,y],na.rm=T),
+            sd=sd(outcomes[last_obs==x,y],na.rm=T)
+        )
+    }) %>% do.call(rbind, .)
+}) %>% do.call(rbind, .)
+
+last_obs_table$last_obs %<>% factor
+
+retrospective_plot = ggplot(last_obs_table, aes(x=day-1, y=mean, color=last_obs)) + geom_point() + geom_line() +
+    geom_pointrange(data=last_obs_table%>%filter(last_obs==0), mapping=aes(ymin=mean-sd, ymax=mean+sd)) +
+    geom_ribbon(aes(ymin=mean-sd, ymax=mean+sd, fill=last_obs), alpha=0.2, linetype=0) +
+    scale_y_continuous(breaks=seq(from=0, to=10), limits=c(0, 10)) +
+    xlab("Postoperative Day") + ylab("Pain score") + 
+    ggtitle("Retrospective")
+```
+
+```{r, echo=F}
+plot_grid(
+    plot_grid(
+        retrospective_plot + theme(legend.position="none"), prospective_plot + theme(legend.position="none"),
+        labels="AUTO"
+    ),
+    get_legend(retrospective_plot + theme(legend.position="bottom") + labs(fill="Day of last pain score", color="Day of last pain score")),
+    nrow=2,
+    rel_heights = c(11, 1)
+)
+```
+
+
+```{r, echo=F, results='hide', warning=F, message=F}
+pain_frequency_table = data.frame(
+    day0 = c(pain_frequency$retrospective[inpatient,1], pain_frequency$prospective[,1]),
+    day1 = c(pain_frequency$retrospective[inpatient,2], pain_frequency$prospective[,2]),
+    day2 = c(pain_frequency$retrospective[inpatient,3], pain_frequency$prospective[,3]),
+    day3 = c(pain_frequency$retrospective[inpatient,4], pain_frequency$prospective[,4]),
+    day4 = c(pain_frequency$retrospective[inpatient,5], pain_frequency$prospective[,5]),
+    group = c(rep("Retrospective (Inpatient)", dim(pain_frequency$retrospective[inpatient,])[1]), rep("Prospective", dim(pain_frequency$prospective)[1]))
+) %>% pivot_longer(-group) 
+
+pain_frequency_table = rbind(
+    pain_frequency_table,
+    data.frame(
+        group="Retrospective (Outpatient)",
+        name="day0",
+        value=pain_frequency$retrospective[!inpatient,1]
+    )
+)
+
+pain_frequency_table %<>% filter(value>0)
+
+pain_frequency_table$group %<>% factor
+```
+
+```{r, echo=F, fig.width=10, fig.height=6}
+pain_frequency_plots = lapply(seq(from=0, to=4), function(x) {
+    ggplot(pain_frequency_table %>% filter(name==sprintf("day%d", x))) + geom_histogram(aes(x=value, fill=group, y=after_stat(density)), binwidth=1, alpha=0.5, position="identity") +
+        scale_fill_manual(breaks=levels(pain_frequency_table$group), values=scales::hue_pal()(3)) +
+        ggtitle(sprintf("Day %d", x)) +
+        xlab("# of Pain Scores") + ylab("Density") +
+        labs(fill="Cohort")
+})
+
+plot_grid(
+    plot_grid(plotlist=lapply(pain_frequency_plots, function(x) x + theme(legend.position="none") + coord_cartesian(xlim=c(0, 25)))),
+    get_legend(pain_frequency_plots[[1]] + theme(legend.position="bottom")),
+    nrow=2, rel_heights = c(11, 1)
+)
+```
+
+
+```{r, echo=F}
+# Relationship between outcomes on earlier days and having outcomes on later days
+x1 = outcomes[!is.na(outcomes[,2]),1]
+x0 = outcomes[is.na(outcomes[,2]),1]
+
+plot_data = data.frame(
+    pain_0 = c(x0, x1),
+    group = c(rep("Excluded", length(x0)), rep("Included", length(x1)))
+)
+
+ggplot(plot_data, aes(x=pain_0, y=after_stat(density), fill=group)) + geom_histogram(binwidth=1, position="identity", alpha=0.5) +
+    ggtitle("Day 1") + xlab("Max pain on postop day 0")
+```
+
+```{r, echo=F}
+x1_0 = outcomes[!is.na(outcomes[,3]),1]
+x0_0 = outcomes[is.na(outcomes[,3]),1]
+
+x1_1 = outcomes[!is.na(outcomes[,3]),2]
+x0_1 = outcomes[is.na(outcomes[,3]),2]
+
+plot_data = data.frame(
+    pain_0 = c(x0_0, x1_0),
+    pain_1 = c(x0_1, x1_1),
+    group = c(rep("Excluded", length(x0_0)), rep("Included", length(x1_0)))
+)
+
+plot_grid(
+    plot_grid(
+        ggplot(plot_data, aes(x=pain_0, y=after_stat(density), fill=group)) + geom_histogram(binwidth=1, position="identity", alpha=0.5) +
+            ggtitle("Day 2") + xlab("Max pain on postop day 0") + theme(legend.position="none"),
+        ggplot(plot_data, aes(x=pain_1, y=after_stat(density), fill=group)) + geom_histogram(binwidth=1, position="identity", alpha=0.5) +
+            ggtitle(" ") +
+            xlab("Max pain on postop day 1") + theme(legend.position="none"),
+        nrow=1
+    ),
+    get_legend(ggplot(plot_data, aes(x=pain_0, y=after_stat(density), fill=group)) + geom_histogram() + theme(legend.position="bottom")),
+    nrow=2, rel_heights = c(11, 1)
+)
+```
+
+```{r, echo=F, fig.width=6.5}
+x1_0 = outcomes[!is.na(outcomes[,4]),1]
+x0_0 = outcomes[is.na(outcomes[,4]),1]
+
+x1_1 = outcomes[!is.na(outcomes[,4]),2]
+x0_1 = outcomes[is.na(outcomes[,4]),2]
+
+x1_2 = outcomes[!is.na(outcomes[,4]),3]
+x0_2 = outcomes[is.na(outcomes[,4]),3]
+
+plot_data = data.frame(
+    pain_0 = c(x0_0, x1_0),
+    pain_1 = c(x0_1, x1_1),
+    pain_2 = c(x0_2, x1_2),
+    group = c(rep("Excluded", length(x0_0)), rep("Included", length(x1_0)))
+)
+
+plot_grid(
+    plot_grid(
+        ggplot(plot_data, aes(x=pain_0, y=after_stat(density), fill=group)) + geom_histogram(binwidth=1, position="identity", alpha=0.5) +
+            ggtitle("Day 3") + xlab("Max pain postop day 0") + theme(legend.position="none"),
+        ggplot(plot_data, aes(x=pain_1, y=after_stat(density), fill=group)) + geom_histogram(binwidth=1, position="identity", alpha=0.5) +
+            ggtitle(" ") +
+            xlab("Max pain postop day 1") + theme(legend.position="none"),
+        ggplot(plot_data, aes(x=pain_2, y=after_stat(density), fill=group)) + geom_histogram(binwidth=1, position="identity", alpha=0.5) +
+            ggtitle(" ") +
+            xlab("Max pain postop day 2") + theme(legend.position="none"),
+        nrow=1
+    ),
+    get_legend(ggplot(plot_data, aes(x=pain_0, y=after_stat(density), fill=group)) + geom_histogram() + theme(legend.position="bottom")),
+    nrow=2, rel_heights = c(11, 1)
+)
+```
+
+
+```{r, echo=F, fig.width=6.5}
+x1_0 = outcomes[!is.na(outcomes[,5]),1]
+x0_0 = outcomes[is.na(outcomes[,5]),1]
+
+x1_1 = outcomes[!is.na(outcomes[,5]),2]
+x0_1 = outcomes[is.na(outcomes[,5]),2]
+
+x1_2 = outcomes[!is.na(outcomes[,5]),3]
+x0_2 = outcomes[is.na(outcomes[,5]),3]
+
+x1_3 = outcomes[!is.na(outcomes[,5]),4]
+x0_3 = outcomes[is.na(outcomes[,5]),4]
+
+plot_data = data.frame(
+    pain_0 = c(x0_0, x1_0),
+    pain_1 = c(x0_1, x1_1),
+    pain_2 = c(x0_2, x1_2),
+    pain_3 = c(x0_3, x1_3),
+    group = c(rep("Excluded", length(x0_0)), rep("Included", length(x1_0)))
+)
+
+plot_grid(
+    plot_grid(
+        ggplot(plot_data, aes(x=pain_0, y=after_stat(density), fill=group)) + geom_histogram(binwidth=1, position="identity", alpha=0.5) +
+            ggtitle("Day 4") + xlab("Max pain on postop day 0") + theme(legend.position="none"),
+        ggplot(plot_data, aes(x=pain_1, y=after_stat(density), fill=group)) + geom_histogram(binwidth=1, position="identity", alpha=0.5) +
+            ggtitle(" ") +
+            xlab("Max pain on postop day 1") + theme(legend.position="none"),
+        ggplot(plot_data, aes(x=pain_2, y=after_stat(density), fill=group)) + geom_histogram(binwidth=1, position="identity", alpha=0.5) +
+            ggtitle(" ") +
+            xlab("Max pain on postop day 2") + theme(legend.position="none"),
+        ggplot(plot_data, aes(x=pain_3, y=after_stat(density), fill=group)) + geom_histogram(binwidth=1, position="identity", alpha=0.5) +
+            ggtitle(" ") +
+            xlab("Max pain on postop day 3") + theme(legend.position="none"),
+        nrow=2
+    ),
+    get_legend(ggplot(plot_data, aes(x=pain_0, y=after_stat(density), fill=group)) + geom_histogram() + theme(legend.position="bottom")),
+    nrow=2, rel_heights = c(11, 1)
+)
+```

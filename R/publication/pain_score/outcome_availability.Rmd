@@ -1,0 +1,43 @@
+---
+title: "R Notebook"
+output: word_document
+---
+
+```{r, echo=F, results='hide', message=F, warning=F}
+library(tidyverse)
+library(flextable)
+library(readxl)
+library(magrittr)
+
+combined_data = readRDS("data/multisite_data.rds")
+outcomes = combined_data$outcomes
+
+processed_data = read_excel("data/pain_prediction/pain_prediction_processed_data.xlsx")
+prospective_outcomes = processed_data %>% dplyr::select(PostopPainDay0, PostopPainDay1, PostopPainDay2, PostopPainDay3, PostopPainDay4)
+```
+
+```{r, echo=F}
+table = data.frame(
+    day = seq(from=0, to=4),
+    retrospective = colSums(!is.na(outcomes)),
+    moderate = colSums(outcomes>4,na.rm=T),
+    severe = colSums(outcomes>6,na.rm=T),
+    excluded = colSums(is.na(outcomes)),
+    prospective = colSums(!is.na(prospective_outcomes)),
+    prospective_moderate = colSums(prospective_outcomes>4,na.rm=T),
+    prospective_severe = colSums(prospective_outcomes>6,na.rm=T),
+    excluded_prospective = colSums(is.na(prospective_outcomes))
+)
+
+colnames(table) = c("Postoperative Day", "Retrospective", "Pain >4", "Pain >6", "Excluded", "Prospective", "Pain >4 ", "Pain >6 ", "Excluded ")
+
+flextable(table) %>% set_table_properties(layout="autofit", width=1) %>% vline(j=c(1, 5)) %>%
+    vline_left() %>% vline_right() %>%
+    bold(part="header")
+```
+
+```{r, echo=F}
+# Number of observations per day
+
+```
+

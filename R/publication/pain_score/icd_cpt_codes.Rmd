@@ -1,0 +1,132 @@
+---
+title: "Distribution of ICD and CPT codes"
+output: word_document
+---
+
+```{r, echo=F, results='hide', message=F, warning=F}
+library(tidyverse)
+library(magrittr)
+library(readxl)
+library(flextable)
+library(pbapply)
+
+pboptions(type="timer")
+
+source("R/functions/cross_platform_getcores.R")
+source("R/functions/map_cpt_icd_descriptions.R")
+
+code_data = readRDS("data/multisite_icd_cpt.rds")
+prospective_data = readRDS("data/pain_prediction/prospective_data_v2.rds")
+icd_descriptions = read_excel("data/icd_descriptions.xlsx")
+cpt_descriptions = read_excel("data/cleaned_cpt_descriptions.xlsx") %>% mutate(CPTCD=as.character(CPTCD), CPTDSC=CleanedCPTDSC)
+
+combined_data = readRDS("data/multisite_data.rds")
+location = combined_data$location
+sequences = code_data$sequences
+
+# Compute patients with at least one observed outcome
+processed_data = read_excel("data/pain_prediction/pain_prediction_processed_data.xlsx")
+valid = apply(!is.na(combined_data$outcomes), 1, any)
+outcomes = processed_data %>% dplyr::select(PostopPainDay0, PostopPainDay1, PostopPainDay2, PostopPainDay3, PostopPainDay4)
+prospective_valid = apply(!is.na(outcomes), 1, any)
+
+# Exclude error codes
+error_codes = code_data$pruned_vocab$term %>% grepl("icd_IMO", ., ignore.case=T) %>% which %>% (function(x) code_data$pruned_vocab$term[x])
+```
+
+# Distribution of CPT codes
+
+## All sites (retrospective)
+```{r, echo=F, results='hide'}
+is_cpt = function(codes) {
+    split_codes = str_split(codes, "_")
+    all_codes = sapply(split_codes, function(x) x[2])
+    all_descriptions = rep(NA, length(all_codes))
+    return(sapply(split_codes, function(x) x[1] == "cpt"))
+}
+
+is_icd = function(codes) {
+    split_codes = str_split(codes, "_")
+    all_codes = sapply(split_codes, function(x) x[2])
+    all_descriptions = rep(NA, length(all_codes))
+    return(sapply(split_codes, function(x) x[1] == "icd"))
+}
+
+# Compute distribution of cpt codes
+cpt_indices = which(is_cpt(code_data$pruned_vocab$term))
+total_occurrences = sum(is.element(code_data$sequences[valid,], cpt_indices))
+cpt_n = pbsapply(cpt_indices, function(x) sum(sequences[valid,]==x), cl=cross_platform_getcores())
+cpt_weights = cpt_n/dim(sequences[valid,])[1]
+
+# Compute distribution of icd codes
+icd_indices = which(is_icd(code_data$pruned_vocab$term) & !is.element(code_data$pruned_vocab$term, error_codes))
+icd_n = pbsapply(icd_indices, function(x) sum(sequences[valid,]==x), cl=cross_platform_getcores())
+icd_weights = icd_n/dim(sequences[valid,])[1]
+```
+
+### CPT
+```{r, echo=F}
+cpt_code_table = data.frame(
+    code = code_data$pruned_vocab$term[cpt_indices] %>% sapply(function(x) str_split(x, "_")[[1]][2]),
+    description = map_cpt_icd_descriptions(code_data$pruned_vocab$term[cpt_indices], icd_descriptions, cpt_descriptions),
+    n = cpt_n,
+    freq = round(cpt_weights * 100, digits=2)
+) %>% rename("CPT"="code", "Description"="description", "Frequency (%)"="freq") %>% arrange(-n)
+
+cpt_code_table %>% head(25) %>% flextable() %>%
+    set_table_properties(layout="autofit", width=1) %>% fontsize(size=9, part='all') %>%
+    vline_left() %>% vline_right()
+```
+
+### ICD
+```{r, echo=F}
+icd_code_table = data.frame(
+    code = code_data$pruned_vocab$term[icd_indices] %>% sapply(function(x) str_split(x, "_")[[1]][2]),
+    description = map_cpt_icd_descriptions(code_data$pruned_vocab$term[icd_indices], icd_descriptions, cpt_descriptions),
+    n = icd_n,
+    freq = round(icd_weights * 100, digits=2)
+) %>% rename("ICD"="code", "Description"="description", "Frequency (%)"="freq") %>% arrange(-n)
+
+icd_code_table %>% head(25) %>% flextable %>%
+    set_table_properties(layout="autofit", width=1) %>% fontsize(size=9, part='all') %>%
+    vline_left() %>% vline_right()
+```
+
+## Prospective
+```{r, echo=F, results='hide'}
+# Compute distribution of cpt codes
+cpt_n = pbsapply(cpt_indices, function(x) sum(prospective_data$sequences[prospective_valid,]==x), cl=cross_platform_getcores())
+cpt_weights = cpt_n/dim(prospective_data$sequences[prospective_valid,])[1]
+
+# Compute distribution of icd codes
+icd_n = pbsapply(icd_indices, function(x) sum(prospective_data$sequences[prospective_valid,]==x), cl=cross_platform_getcores())
+icd_weights = icd_n/dim(prospective_data$sequences[prospective_valid,])[1]
+```
+
+### CPT
+```{r, echo=F}
+cpt_code_table = data.frame(
+    code = code_data$pruned_vocab$term[cpt_indices] %>% sapply(function(x) str_split(x, "_")[[1]][2]),
+    description = map_cpt_icd_descriptions(code_data$pruned_vocab$term[cpt_indices], icd_descriptions, cpt_descriptions),
+    n = cpt_n,
+    freq = round(cpt_weights * 100, digits=2)
+) %>% rename("CPT"="code", "Description"="description", "Frequency (%)"="freq") %>% arrange(-n)
+
+cpt_code_table %>% head(25) %>% flextable() %>%
+    set_table_properties(layout="autofit", width=1) %>% fontsize(size=9, part='all') %>%
+    vline_left() %>% vline_right()
+```
+
+### ICD
+```{r, echo=F}
+icd_code_table = data.frame(
+    code = code_data$pruned_vocab$term[icd_indices] %>% sapply(function(x) str_split(x, "_")[[1]][2]),
+    description = map_cpt_icd_descriptions(code_data$pruned_vocab$term[icd_indices], icd_descriptions, cpt_descriptions),
+    n = icd_n,
+    freq = round(icd_weights * 100, digits=2)
+) %>% rename("ICD"="code", "Description"="description", "Frequency (%)"="freq") %>% arrange(-n)
+
+icd_code_table %>% head(25) %>% flextable %>%
+    set_table_properties(layout="autofit", width=1) %>% fontsize(size=9, part='all') %>%
+    vline_left() %>% vline_right()
+```

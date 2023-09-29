@@ -1,0 +1,94 @@
+---
+title: "Clustering on pain embeddings"
+output: html_notebook
+---
+
+```{r, echo=F, results='hide', warning=F, message=F}
+library(tidyverse)
+library(magrittr)
+library(readxl)
+library(flextable)
+
+# Retrospective
+prediction_data = readRDS("data/pain_prediction_data_combined_v2.rds")
+clustering_results = readRDS("data/results/pain_score_clustering.rds")
+all_data = readRDS("data/all_data.rds")
+filtered_data = all_data %>% filter(inpatient_vs_ambulatory==1)
+outcomes = prediction_data$max_pain[all_data$inpatient_vs_ambulatory==1,]
+# Prospective
+prospective_data = readRDS("data/pain_prediction/prospective_data.rds")
+processed_data = read_excel("data/pain_prediction/pain_prediction_processed_data.xlsx")
+
+k = max(clustering_results$clustering$cluster)
+```
+
+# Retrospective
+```{r, echo=F}
+retrospective_clusters = lapply(seq_len(k), function(x) {
+    pacu_max_pain = filtered_data$pacu_max_pain_score[clustering_results$clustering$cluster==x]
+    postop_24h_max_pain = filtered_data$postop_24h_max_pain[clustering_results$clustering$cluster==x]
+    hospital_max_pain = filtered_data$postop_discharge_max_pain[clustering_results$clustering$cluster==x]
+    day_0 = outcomes[clustering_results$clustering$cluster==x,1]
+    day_1 = outcomes[clustering_results$clustering$cluster==x,2]
+    day_2 = outcomes[clustering_results$clustering$cluster==x,3]
+    day_3 = outcomes[clustering_results$clustering$cluster==x,4]
+    day_4 = outcomes[clustering_results$clustering$cluster==x,5]
+    pacu_mme = filtered_data$pacu_total_mme[clustering_results$clustering$cluster==x]
+    postop_24h_mme = filtered_data$postop_24h_mme[clustering_results$clustering$cluster==x]
+    hospital_mme = filtered_data$total_mme_in_hospital[clustering_results$clustering$cluster==x]
+    los = filtered_data$hospital_length_of_stay[clustering_results$clustering$cluster==x]/60
+    
+    data.frame(
+        cluster = x,
+        n = sum(clustering_results$clustering$cluster==x),
+        pacu_max_pain = sprintf("%s (%s)", format(mean(pacu_max_pain, na.rm=T), nsmall=2, digits=2), format(sd(pacu_max_pain, na.rm=T), nsmall=2, digits=2)),
+        postop_24h_max_pain = sprintf("%s (%s)", format(mean(postop_24h_max_pain, na.rm=T), nsmall=2, digits=2), format(sd(postop_24h_max_pain, na.rm=T), nsmall=2, digits=2)),
+        hospital_max_pain = sprintf("%s (%s)", format(mean(hospital_max_pain, na.rm=T), nsmall=2, digits=2), format(sd(hospital_max_pain, na.rm=T), nsmall=2, digits=2)),
+        day_0 = sprintf("%s (%s)", format(mean(day_0, na.rm=T), nsmall=2, digits=2), format(sd(day_0, na.rm=T), nsmall=2, digits=2)),
+        day_1 = sprintf("%s (%s)", format(mean(day_1, na.rm=T), nsmall=2, digits=2), format(sd(day_1, na.rm=T), nsmall=2, digits=2)),
+        day_2 = sprintf("%s (%s)", format(mean(day_2, na.rm=T), nsmall=2, digits=2), format(sd(day_2, na.rm=T), nsmall=2, digits=2)),
+        day_3 = sprintf("%s (%s)", format(mean(day_3, na.rm=T), nsmall=2, digits=2), format(sd(day_3, na.rm=T), nsmall=2, digits=2)),
+        day_4 = sprintf("%s (%s)", format(mean(day_4, na.rm=T), nsmall=2, digits=2), format(sd(day_4, na.rm=T), nsmall=2, digits=2)),
+        pacu_mme = format(median(pacu_mme, na.rm=T), nsmall=2, digits=2), 
+        postop_24h_mme = format(median(postop_24h_mme, na.rm=T), nsmall=2, digits=2), 
+        hospital_mme = format(median(hospital_mme, na.rm=T), nsmall=2, digits=2),
+        los = sprintf("%s (%s, %s)", format(median(los, na.rm=T), nsmall=2, digits=2), format(quantile(los, 0.25, na.rm=T), nsmall=2, digits=2), format(quantile(los, 0.75, na.rm=T), nsmall=2, digits=2))
+    )
+}) %>% do.call(rbind, .)
+
+
+cluster_indices = c(3, 1, 2, 4)
+retrospective_clusters$cluster = cluster_indices
+retrospective_clusters %<>% arrange(cluster)
+
+retrospective_clusters %>% flextable %>% autofit
+```
+
+# Prospective
+```{r, echo=F}
+prospective_clusters = lapply(seq_len(k), function(x) {
+    pacu_max_pain = processed_data$MaxPainInPACU[clustering_results$prospective_cluster==x]
+    day_0 = processed_data$PostopPainDay0[clustering_results$prospective_cluster==x]
+    day_1 = processed_data$PostopPainDay1[clustering_results$prospective_cluster==x]
+    day_2 = processed_data$PostopPainDay2[clustering_results$prospective_cluster==x]
+    day_3 = processed_data$PostopPainDay3[clustering_results$prospective_cluster==x]
+    day_4 = processed_data$PostopPainDay4[clustering_results$prospective_cluster==x]
+    
+    data.frame(
+        cluster = x,
+        n = sum(clustering_results$prospective_cluster==x),
+        pacu_max_pain = sprintf("%s (%s)", format(mean(pacu_max_pain, na.rm=T), nsmall=2, digits=2), format(sd(pacu_max_pain, na.rm=T), nsmall=2, digits=2)),
+        day_0 = sprintf("%s (%s)", format(mean(day_0, na.rm=T), nsmall=2, digits=2), format(sd(day_0, na.rm=T), nsmall=2, digits=2)),
+        day_1 = sprintf("%s (%s)", format(mean(day_1, na.rm=T), nsmall=2, digits=2), format(sd(day_1, na.rm=T), nsmall=2, digits=2)),
+        day_2 = sprintf("%s (%s)", format(mean(day_2, na.rm=T), nsmall=2, digits=2), format(sd(day_2, na.rm=T), nsmall=2, digits=2)),
+        day_3 = sprintf("%s (%s)", format(mean(day_3, na.rm=T), nsmall=2, digits=2), format(sd(day_3, na.rm=T), nsmall=2, digits=2)),
+        day_4 = sprintf("%s (%s)", format(mean(day_4, na.rm=T), nsmall=2, digits=2), format(sd(day_4, na.rm=T), nsmall=2, digits=2))
+    )
+}) %>% do.call(rbind, .)
+
+prospective_clusters$cluster = cluster_indices
+prospective_clusters %<>% arrange(cluster)
+
+prospective_clusters %>% flextable %>% autofit
+```
+

@@ -1,0 +1,231 @@
+---
+title: "Calibration results"
+output: word_document
+---
+
+```{r, echo=F, results='hide', message=F, warning=F}
+library(tidyverse)
+library(magrittr)
+library(survival)
+library(readxl)
+library(pROC)
+library(cowplot)
+library(flextable)
+library(gridExtra)
+library(pbapply)
+library(matrixStats)
+
+set.seed(0)
+
+source("R/functions/cross_platform_getcores.R")
+source("R/functions/sigmoid.R")
+
+multisite_data = readRDS("data/multisite_data.rds")
+valid = apply(!is.na(multisite_data$outcomes), 1, any)
+
+results = readRDS("data/results/pain_multisite_all.rds")
+results_binarized = readRDS("data/results/pain_multisite_all_binarized_4.rds")
+results_binarized_6 = readRDS("data/results/pain_multisite_all_binarized_6.rds")
+
+processed_data = read_excel("data/pain_prediction/pain_prediction_processed_data.xlsx")
+survey_results = read_excel("data/pain_prediction/cleaned_survey_results.xlsx")
+outcomes = processed_data %>% dplyr::select(PostopPainDay0, PostopPainDay1, PostopPainDay2, PostopPainDay3, PostopPainDay4)
+has_outcomes = apply(outcomes, 1, function(x) any(!is.na(x)))
+
+prospective_results = readRDS("data/results/pain_prospective_mgh.rds")
+prospective_results_binarized = readRDS("data/results/pain_prospective_mgh_binarized_4.rds")
+prospective_results_binarized_6 = readRDS("data/results/pain_prospective_mgh_binarized_6.rds")
+
+averaged_clinician_response = lapply(processed_data$LogID, function(log_id) {
+    survey_results %>% dplyr::filter(LogID==log_id) %>% dplyr::select(PainDay0, PainDay1, PainDay2, PainDay3, PainDay4) %>% colMeans()
+}) %>% do.call(rbind, .)
+
+bootstrap_n = 2000
+cores = cross_platform_getcores()
+```
+
+# O/E ratio
+```{r, echo=F, results='hide'}
+# Retrospective
+binarized_pred = results_binarized$pred 
+binarized_plot_data = lapply(seq_len(5), function(i) {
+    data.frame(predicted=binarized_pred[,i] %>% sigmoid, actual=(multisite_data$outcomes[,i]>4)*1) %>% na.omit
+})
+
+
+oe_ratio = sapply(binarized_plot_data, function(x) colSums(x)) %>% (function(x) x[2,]/x[1,])
+bootstrap_oe_ratio = sapply(binarized_plot_data, function(x) {
+    pbsapply(seq_len(bootstrap_n), function(iteration) {
+        current_sample = sample(dim(x)[1], dim(x)[1], replace=T)
+        colSums(x[current_sample,]) %>% (function(y) y[2]/y[1])
+    }, cl=cores)
+})
+
+binarized_pred_6 = results_binarized_6$pred
+binarized_plot_data_6 = lapply(seq_len(5), function(i) {
+    data.frame(predicted=binarized_pred_6[,i] %>% sigmoid, actual=(multisite_data$outcomes[,i]>6)*1) %>% na.omit
+})
+
+oe_ratio_6 = sapply(binarized_plot_data_6, function(x) colSums(x)) %>% (function(x) x[2,]/x[1,])
+bootstrap_oe_ratio_6 = sapply(binarized_plot_data_6, function(x) {
+    pbsapply(seq_len(bootstrap_n), function(iteration) {
+        current_sample = sample(dim(x)[1], dim(x)[1], replace=T)
+        colSums(x[current_sample,]) %>% (function(y) y[2]/y[1])
+    }, cl=cores)
+})
+
+# Prospective
+prospective_binarized_pred = prospective_results_binarized$pred
+prospective_binarized_plot_data = lapply(seq_len(5), function(i) {
+    data.frame(predicted=prospective_binarized_pred[,i] %>% sigmoid, actual=(outcomes[[i]]>4)*1) %>% na.omit
+})
+
+prospective_oe_ratio = sapply(prospective_binarized_plot_data, function(x) colSums(x)) %>% (function(x) x[2,]/x[1,])
+bootstrap_prospective_oe_ratio = sapply(prospective_binarized_plot_data, function(x) {
+    pbsapply(seq_len(bootstrap_n), function(iteration) {
+        current_sample = sample(dim(x)[1], dim(x)[1], replace=T)
+        colSums(x[current_sample,]) %>% (function(y) y[2]/y[1])
+    }, cl=cores)
+})
+
+prospective_binarized_pred_6 = prospective_results_binarized_6$pred
+prospective_binarized_plot_data_6 = lapply(seq_len(5), function(i) {
+    data.frame(predicted=prospective_binarized_pred_6[,i] %>% sigmoid, actual=(outcomes[[i]]>6)*1) %>% na.omit
+})
+
+prospective_oe_ratio_6 = sapply(prospective_binarized_plot_data_6, function(x) colSums(x)) %>% (function(x) x[2,]/x[1,])
+bootstrap_prospective_oe_ratio_6 = sapply(prospective_binarized_plot_data_6, function(x) {
+    pbsapply(seq_len(bootstrap_n), function(iteration) {
+        current_sample = sample(dim(x)[1], dim(x)[1], replace=T)
+        colSums(x[current_sample,]) %>% (function(y) y[2]/y[1])
+    }, cl=cores)
+})
+
+# Clinician
+clinician_binarized_plot_data = lapply(seq_len(5), function(i) {
+    data.frame(predicted=averaged_clinician_response[,i] > 4, actual=(outcomes[[i]]>4)*1) %>% na.omit
+})
+clinician_oe_ratio = sapply(clinician_binarized_plot_data, function(x) colSums(x)) %>% (function(x) x[2,]/x[1,])
+bootstrap_clinician_oe_ratio = sapply(clinician_binarized_plot_data, function(x) {
+    pbsapply(seq_len(bootstrap_n), function(iteration) {
+        current_sample = sample(dim(x)[1], dim(x)[1], replace=T)
+        colSums(x[current_sample,]) %>% (function(y) y[2]/y[1])
+    }, cl=cores)
+})
+
+
+clinician_binarized_plot_data_6 = lapply(seq_len(5), function(i) {
+    data.frame(predicted=averaged_clinician_response[,i] > 6, actual=(outcomes[[i]]>6)*1) %>% na.omit
+})
+clinician_oe_ratio_6 = sapply(clinician_binarized_plot_data_6, function(x) colSums(x)) %>% (function(x) x[2,]/x[1,])
+bootstrap_clinician_oe_ratio_6 = sapply(clinician_binarized_plot_data_6, function(x) {
+    pbsapply(seq_len(bootstrap_n), function(iteration) {
+        current_sample = sample(dim(x)[1], dim(x)[1], replace=T)
+        colSums(x[current_sample,]) %>% (function(y) y[2]/y[1])
+    }, cl=cores)
+})
+
+```
+
+## Pain > 4
+```{r, echo=F}
+# Generate tables
+oe_ratio_table = data.frame(
+    group = rep(c("Retrospective", "Prospective", "Clinician"), each=5),
+    day = rep(seq_len(5), 3),
+    oe_ratio = c(oe_ratio, prospective_oe_ratio, clinician_oe_ratio),
+    lower = c(colQuantiles(bootstrap_oe_ratio, probs=0.025), colQuantiles(bootstrap_prospective_oe_ratio, probs=0.025), colQuantiles(bootstrap_clinician_oe_ratio, probs=0.025)),
+    upper = c(colQuantiles(bootstrap_oe_ratio, probs=0.975), colQuantiles(bootstrap_prospective_oe_ratio, probs=0.975), colQuantiles(bootstrap_clinician_oe_ratio, probs=0.975))
+)
+
+oe_ratio_table %>% dplyr::transmute(group=group, Day=day, oe_ratio = sprintf("%.3f (%.3f, %.3f)", oe_ratio, lower, upper)) %>%
+    pivot_wider(names_from=group, values_from=oe_ratio) %>%
+    flextable %>% set_table_properties(layout="autofit", width=1) %>%
+    vline_left %>% vline_right
+```
+
+## Pain >6
+```{r, echo=F}
+oe_ratio_table_6 = data.frame(
+    group = rep(c("Retrospective", "Prospective", "Clinician"), each=5),
+    day = rep(seq_len(5), 3),
+    oe_ratio = c(oe_ratio_6, prospective_oe_ratio_6, clinician_oe_ratio_6),
+    lower = c(colQuantiles(bootstrap_oe_ratio_6, probs=0.025), colQuantiles(bootstrap_prospective_oe_ratio_6, probs=0.025), colQuantiles(bootstrap_clinician_oe_ratio_6, probs=0.025)),
+    upper = c(colQuantiles(bootstrap_oe_ratio_6, probs=0.975), colQuantiles(bootstrap_prospective_oe_ratio_6, probs=0.975), colQuantiles(bootstrap_clinician_oe_ratio_6, probs=0.975))
+)
+
+oe_ratio_table_6 %>% dplyr::transmute(group=group, Day=day, oe_ratio = sprintf("%.3f (%.3f, %.3f)", oe_ratio, lower, upper)) %>%
+    pivot_wider(names_from=group, values_from=oe_ratio) %>%
+    flextable %>% set_table_properties(layout="autofit", width=1) %>%
+    vline_left %>% vline_right
+```
+
+
+# Calibration slope and intercept
+```{r, echo=F}
+pred = results$pred
+pred[pred<0] = 0
+pred[pred>1] = 1
+
+mean_data = lapply(seq_len(5), function(i) {
+    data.frame(predicted=pred[,i]*10, actual=multisite_data$outcomes[,i]) %>% na.omit
+})
+retrospective_models = lapply(mean_data, function(x) glm(actual~predicted, data=x))
+
+
+# Prospective
+prospective_pred = prospective_results$pred
+prospective_pred[prospective_pred<0] = 0
+prospective_pred[prospective_pred>1] = 1
+
+prospective_mean_data = lapply(seq_len(5), function(i) {
+    data.frame(predicted=prospective_pred[,i]*10, actual=outcomes[[i]]) %>% na.omit
+})
+prospective_models = lapply(prospective_mean_data, function(x) glm(actual~predicted, data=x))
+
+# Clinician
+clinician_mean_data = lapply(seq_len(5), function(i) {
+    data.frame(predicted=averaged_clinician_response[,i], actual=outcomes[[i]]) %>% na.omit
+})
+clinician_models = lapply(clinician_mean_data, function(x) glm(actual~predicted, data=x))
+```
+
+```{r, echo=F}
+calibration_table = data.frame(
+    group = rep(c("Retrospective", "Prospective", "Clinician"), each=5),
+    day = rep(seq_len(5), 3),
+    intercept = c(
+        sapply(retrospective_models, function(x) summary(x)$coefficients[1,1]),
+        sapply(prospective_models, function(x) summary(x)$coefficients[1,1]),
+        sapply(clinician_models, function(x) summary(x)$coefficients[1,1])),
+    intercept_sd = c(
+        sapply(retrospective_models, function(x) summary(x)$coefficients[1,2]),
+        sapply(prospective_models, function(x) summary(x)$coefficients[1,2]),
+        sapply(clinician_models, function(x) summary(x)$coefficients[1,2])),
+    slope = c(
+        sapply(retrospective_models, function(x) summary(x)$coefficients[2,1]),
+        sapply(prospective_models, function(x) summary(x)$coefficients[2,1]),
+        sapply(clinician_models, function(x) summary(x)$coefficients[2,1])),
+    slope_sd = c(
+        sapply(retrospective_models, function(x) summary(x)$coefficients[2,2]),
+        sapply(prospective_models, function(x) summary(x)$coefficients[2,2]),
+        sapply(clinician_models, function(x) summary(x)$coefficients[2,2]))
+) %>% dplyr::transmute(
+    group=group, 
+    Day=day,
+    intercept=sprintf("%.3f (%.3f, %.3f)", intercept, intercept-qnorm(1-0.025)*intercept_sd, intercept+qnorm(1-0.025)*intercept_sd),
+    slope=sprintf("%.3f (%.3f, %.3f)", slope, slope-qnorm(1-0.025)*slope_sd, slope+qnorm(1-0.025)*slope_sd)
+)
+```
+
+## Intercept (calibration-in-the-large)
+```{r, echo=F}
+calibration_table %>% dplyr::select(-slope) %>% pivot_wider(names_from=group, values_from=intercept) %>%
+    flextable %>% set_table_properties(layout="autofit", width=1) %>% vline_left %>% vline_right
+```
+
+## Slope
+```{r, echo=F}
+calibration_table %>% dplyr::select(-intercept) %>% pivot_wider(names_from=group, values_from=slope) %>%
+    flextable %>% set_table_properties(layout="autofit", width=1) %>% vline_left %>% vline_right
+```

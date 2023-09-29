@@ -1,0 +1,113 @@
+---
+title: "Baseline statistics, prospective cohort"
+output: word_document
+---
+
+```{r, results='hide', echo=F, warning=F, message=F}
+rm(list=ls())
+library(tidyverse)
+library(magrittr)
+library(readxl)
+library(flextable)
+
+prospective_data = readRDS("data/pain_prediction/prospective_data.rds")
+survey_results = read_excel("data/pain_prediction/cleaned_survey_results.xlsx")
+processed_data = read_excel("data/pain_prediction/pain_prediction_processed_data.xlsx")
+icd_codes = read_excel("data/pain_prediction/token_icds.xlsx")
+cpt_codes = read_excel("data/pain_prediction/token_cpts.xlsx")
+opioid_naive = read.csv("data/prospective_opioid_naive.csv")
+
+outcomes = processed_data %>% dplyr::select(PostopPainDay0, PostopPainDay1, PostopPainDay2, PostopPainDay3, PostopPainDay4)
+valid = apply(!is.na(outcomes), 1, any)
+processed_data = processed_data[valid,]
+
+unique_counts = function(x) sapply(unique(x), function(y) sum(x==y)) %>% sort(decreasing=T)
+```
+
+```{r, echo=F}
+wrap_par = function(x) str_c("(", x, ")")
+wrap_pct = function(x) str_c("(", x, ")")
+
+baseline_stats = data.frame(
+    statistic = c(
+        "Total patients",
+        "Demographics",
+        "\tAge, mean (SD), years",
+        "\tSex",
+        "\t\tMale",
+        "\t\tFemale",
+        "\tRace/Ethnicity",
+        "\t\tWhite",
+        "\t\tBlack",
+        "\t\tAsian",
+        "\t\tHispanic",
+        "\t\tOther",
+        "\tHeight, mean (SD), m",
+        "\tWeight, mean (SD), kg",
+        "Opioid naive",
+        "Elixhauser Comorbidity Index, median (IQR)",
+        "Surgical service",
+        "\tGeneral Surgery",
+        "\tNeurosurgery",
+        "\tOrthopedic Surgery",
+        "\tThoracic Surgery",
+        "\tUrology",
+        "\tOther"
+    ),
+    n = c(
+        dim(processed_data)[1],
+        NA,
+        format(mean(processed_data$Age), nsmall=1, digits=1),
+        NA,
+        sum(processed_data$SexDSC=="Male"),
+        dim(processed_data)[1]-sum(processed_data$SexDSC=="Male"),
+        NA,
+        sum(processed_data$Race=="White"),
+        sum(processed_data$Race=="Black"),
+        sum(processed_data$Race=="Asian"),
+        sum(processed_data$Race=="Hispanic"),
+        sum(processed_data$Race=="Other"),
+        format(mean(processed_data$HeightCM/100), nsmall=2, digits=2),
+        format(mean(processed_data$WeightKG), nsmall=1, digits=1),
+        sum(opioid_naive$OpioidNaive),
+        median(processed_data$ELIX),
+        NA,
+        sum(processed_data$ServiceDSC=="General Surgery"),
+        sum(processed_data$ServiceDSC=="Neurosurgery"),
+        sum(processed_data$ServiceDSC=="Orthopedic Surgery"),
+        sum(processed_data$ServiceDSC=="Thoracic Surgery"),
+        sum(processed_data$ServiceDSC=="Urology"),
+        sum(!is.element(processed_data$ServiceDSC, c("General Surgery", "Neurosurgery", "Orthopedic Surgery", "Thoracic Surgery", "Urology")))
+    ),
+    percentage = c(
+        "100.0" %>% wrap_pct,
+        NA,
+        format(sd(processed_data$Age), nsmall=1, digits=1) %>% wrap_par,
+        NA,
+        format(sum(processed_data$SexDSC=="Male")/dim(processed_data)[1]*100, nsmall=1, digits=1)  %>% wrap_pct,
+        format((dim(processed_data)[1]-sum(processed_data$SexDSC=="Male"))/dim(processed_data)[1]*100, nsmall=1, digits=1) %>% wrap_pct,
+        NA,
+        format(sum(processed_data$Race=="White")/dim(processed_data)[1]*100, nsmall=1, digits=1) %>% wrap_pct,
+        format(sum(processed_data$Race=="Black")/dim(processed_data)[1]*100, nsmall=1, digits=1) %>% wrap_pct,
+        format(sum(processed_data$Race=="Asian")/dim(processed_data)[1]*100, nsmall=1, digits=1) %>% wrap_pct,
+        format(sum(processed_data$Race=="Hispanic")/dim(processed_data)[1]*100, nsmall=1, digits=1) %>% wrap_pct,
+        format(sum(processed_data$Race=="Other")/dim(processed_data)[1]*100, nsmall=1, digits=1) %>% wrap_pct,
+        format(sd(processed_data$HeightCM/100), nsmall=2, digits=2) %>% wrap_par,
+        format(sd(processed_data$WeightKG), nsmall=1, digits=1) %>% wrap_par,
+        format(sum(opioid_naive$OpioidNaive)/dim(processed_data)[1]*100, nsmall=1, digits=1) %>% wrap_pct,
+        sprintf("(%d, %d)", quantile(processed_data$ELIX, probs=0.25), quantile(processed_data$ELIX, probs=0.75)),
+        NA,
+        format(sum(processed_data$ServiceDSC=="General Surgery")/dim(processed_data)[1]*100, nsmall=1, digits=1) %>% wrap_pct,
+        format(sum(processed_data$ServiceDSC=="Neurosurgery")/dim(processed_data)[1]*100, nsmall=1, digits=1) %>% wrap_pct,
+        format(sum(processed_data$ServiceDSC=="Orthopedic Surgery")/dim(processed_data)[1]*100, nsmall=1, digits=1) %>% wrap_pct,
+        format(sum(processed_data$ServiceDSC=="Thoracic Surgery")/dim(processed_data)[1]*100, nsmall=1, digits=1) %>% wrap_pct,
+        format(sum(processed_data$ServiceDSC=="Urology")/dim(processed_data)[1]*100, nsmall=1, digits=1) %>% wrap_pct,
+        format(sum(!is.element(processed_data$ServiceDSC, c("General Surgery", "Neurosurgery", "Orthopedic Surgery", "Thoracic Surgery", "Urology")))/dim(processed_data)[1]*100, nsmall=1, digits=1) %>% wrap_pct
+    )
+)
+
+colnames(baseline_stats) = c("Statistic", "Count", "(%)")
+
+baseline_stats %>% flextable %>% set_table_properties(layout="autofit", width=1) %>% vline_left() %>% vline_right()
+```
+

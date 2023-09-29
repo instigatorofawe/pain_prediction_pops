@@ -1,0 +1,160 @@
+---
+title: "Performance by service"
+output: word_document
+---
+
+```{r, echo=F, results='hide', message=F, warning=F}
+library(tidyverse)
+library(magrittr)
+library(survival)
+library(readxl)
+library(pROC)
+library(cowplot)
+library(flextable)
+library(gridExtra)
+library(pbapply)
+
+set.seed(0)
+
+source("R/functions/cross_platform_getcores.R")
+
+cores = cross_platform_getcores()
+
+multisite_data = readRDS("data/multisite_data.rds")
+
+results = readRDS("data/results/pain_multisite_all.rds")
+results_binarized = readRDS("data/results/pain_multisite_all_binarized_4.rds")
+results_binarized_6 = readRDS("data/results/pain_multisite_all_binarized_6.rds")
+
+processed_data = read_excel("data/pain_prediction/pain_prediction_processed_data.xlsx")
+survey_results = read_excel("data/pain_prediction/cleaned_survey_results.xlsx")
+outcomes = processed_data %>% dplyr::select(PostopPainDay0, PostopPainDay1, PostopPainDay2, PostopPainDay3, PostopPainDay4)
+has_outcomes = apply(outcomes, 1, function(x) any(!is.na(x)))
+
+prospective_results = readRDS("data/results/pain_prospective_mgh.rds")
+prospective_results_binarized = readRDS("data/results/pain_prospective_mgh_binarized_4.rds")
+prospective_results_binarized_6 = readRDS("data/results/pain_prospective_mgh_binarized_6.rds")
+
+bootstrap_n = 2000
+
+service_counts = multisite_data$demographics[,11:39] %>% colSums
+services = multisite_data$demographics[,11:39] %>% apply(1, function(x) which(x==1))
+top_services = order(service_counts, decreasing=T)[1:10]
+```
+
+# AUC (Pain > 4)
+```{r, echo=F, results='hide', message=F}
+rocs_4 = lapply(seq_len(5), function(i) {
+    lapply(top_services, function(j) {
+        roc_4 = roc(multisite_data$outcomes[!multisite_data$training & services==j,i]>4, results_binarized$pred[!multisite_data$training & services==j,i])
+        auc = ci.auc(roc_4)
+        data.frame(
+            day = sprintf("Postop Day %d", i-1),
+            auc = auc[2],
+            lower = auc[1],
+            upper = auc[3],
+            service = multisite_data$service_levels[j]
+        )
+    }) %>% do.call(rbind, .)
+}) %>% do.call(rbind, .)
+
+rocs_4_formatted = rocs_4 %>%
+    transmute(Day=day, auc=sprintf("%.3f (%.3f, %.3f)", auc, lower, upper), Service=service) %>%
+    pivot_wider(names_from=Day, values_from=auc)
+```
+
+
+```{r, echo=F}
+flextable(rocs_4_formatted) %>% set_table_properties(layout="autofit", width=1) %>%
+    vline_left %>% vline_right
+```
+
+
+# AUC (Pain > 6)
+```{r, echo=F, results='hide', message=F}
+rocs_6 = lapply(seq_len(5), function(i) {
+    lapply(top_services, function(j) {
+        roc_6 = roc(multisite_data$outcomes[!multisite_data$training & services==j,i]>6, results_binarized_6$pred[!multisite_data$training & services==j,i])
+        auc = ci.auc(roc_6)
+        data.frame(
+            day = sprintf("Postop Day %d", i-1),
+            auc = auc[2],
+            lower = auc[1],
+            upper = auc[3],
+            service = multisite_data$service_levels[j]
+        )
+    }) %>% do.call(rbind, .)
+}) %>% do.call(rbind, .)
+
+rocs_6_formatted = rocs_6 %>%
+    transmute(Day=day, auc=sprintf("%.3f (%.3f, %.3f)", auc, lower, upper), Service=service) %>%
+    pivot_wider(names_from=Day, values_from=auc)
+```
+
+```{r, echo=F}
+flextable(rocs_6_formatted) %>% set_table_properties(layout="autofit", width=1) %>%
+    vline_left %>% vline_right
+```
+
+# RMSE
+```{r, echo=F, results='hide', message=F}
+set.seed(0)
+rmses = lapply(seq_len(5), function(i) {
+    lapply(top_services, function(j) {
+        se = (multisite_data$outcomes[!multisite_data$training & services==j,i] - results$pred[!multisite_data$training & services==j,i]*10)^2
+        se = se[!is.na(se)]
+        rmse = sqrt(mean(se))
+        rmse_bootstrap = pbsapply(seq_len(bootstrap_n), function(x) {
+            current_sample = sample(length(se), length(se), replace=T)
+            sqrt(mean(se[current_sample]))
+        })
+        data.frame(
+            day = sprintf("Postop Day %d", i-1),
+            rmse = rmse,
+            lower = quantile(rmse_bootstrap, probs=0.025),
+            upper = quantile(rmse_bootstrap, probs=0.975),
+            service = multisite_data$service_levels[j]
+        )
+    }) %>% do.call(rbind, .)
+}) %>% do.call(rbind, .)
+```
+
+
+```{r, echo=F}
+rmses %>%
+    transmute(Day=day, Service=service, rmse=sprintf("%.3f (%.3f, %.3f)", rmse, lower, upper)) %>%
+    pivot_wider(names_from=Day, values_from=rmse) %>%
+    flextable %>% set_table_properties(layout="autofit", width=1) %>%
+    vline_left %>% vline_right
+```
+
+# Correlation
+```{r, echo=F, results='hide', message=F}
+set.seed(0)
+correlations = lapply(seq_len(5), function(i) {
+    lapply(top_services, function(j) {
+        correlation_data = data.frame(x=multisite_data$outcomes[!multisite_data$training & services==j,i], y=results$pred[!multisite_data$training & services==j,i]) %>% na.omit
+        correlation = cor(correlation_data)[1,2]
+        correlation_bootstrap = pbsapply(seq_len(bootstrap_n), function(x) {
+            current_sample = sample(dim(correlation_data)[1], dim(correlation_data)[1], replace=T)
+            cor(correlation_data[current_sample,])[1,2]
+        }, cl=cores)
+        
+        data.frame(
+            day = sprintf("Postop Day %d", i-1),
+            correlation = correlation,
+            lower = quantile(correlation_bootstrap, probs=0.025),
+            upper = quantile(correlation_bootstrap, probs=0.975),
+            service = multisite_data$service_levels[j]
+        )
+    }) %>% do.call(rbind, .)
+}) %>% do.call(rbind, .)
+```
+
+```{r, echo=F}
+correlations %>%
+    transmute(Day=day, Service=service, correlation=sprintf("%.3f (%.3f, %.3f)", correlation, lower, upper)) %>%
+    pivot_wider(names_from=Day, values_from=correlation) %>%
+    flextable %>% set_table_properties(layout="autofit", width=1) %>%
+    vline_left %>% vline_right
+```

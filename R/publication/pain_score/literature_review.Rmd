@@ -1,0 +1,34 @@
+---
+title: "Literature review"
+output: html_notebook
+---
+
+```{r, echo=F, results='hide', message=F, warning=F}
+library(tidyverse)
+library(readxl)
+library(magrittr)
+library(flextable)
+
+data = read_excel("data/figure4_data_transpose.xlsx")
+colnames(data)[1] = "Study"
+```
+
+
+
+```{r, echo=F, fig.width=12}
+# Cohort data
+cohort_data = data %>% dplyr::select(Study, Retrospective, Prospective) %>% pivot_longer(all_of(c("Retrospective", "Prospective")))
+cohort_data$value = cohort_data$value
+cohort_data$name %<>% factor(levels=c("Retrospective", "Prospective"))
+
+
+cohort_plot = ggplot(cohort_data, aes(x=Study, y=value+1, fill=name)) + geom_bar(stat="identity", position="dodge", width=0.8) +
+    # scale_y_log10(breaks=c(10, 100, 1000, 10000, 100000), labels=c("10", "100", "1,000", "10,000", "100,000")) +
+    labs(fill="Cohort") +
+    ylab("Study size") +
+    theme_minimal() +
+    theme(legend.position=c(1,1), legend.justification = c(1,1))
+
+cohort_plot
+```
+

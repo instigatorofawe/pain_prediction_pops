@@ -1,0 +1,324 @@
+---
+title: "Performance metrics (prospective)"
+output: html_notebook
+---
+
+```{r, echo=F, results='hide', warning=F, message=F}
+library(readxl)
+library(tidyverse)
+library(magrittr)
+library(flextable)
+library(pROC)
+library(pbapply)
+library(cowplot)
+
+source("R/functions/cross_platform_getcores.R")
+
+processed_data = read_excel("data/pain_prediction/pain_prediction_processed_data.xlsx")
+survey_results = read_excel("data/pain_prediction/cleaned_survey_results.xlsx")
+outcomes = processed_data %>% dplyr::select(PostopPainDay0, PostopPainDay1, PostopPainDay2, PostopPainDay3, PostopPainDay4)
+
+results_all = readRDS("data/results/pain_prospective_all.rds")
+results_mgh = readRDS("data/results/pain_prospective_mgh.rds")
+results_nsmc = readRDS("data/results/pain_prospective_nsmc.rds")
+results_bwh = readRDS("data/results/pain_prospective_bwh.rds")
+results_nwh = readRDS("data/results/pain_prospective_nwh.rds")
+
+binarized_results_all = readRDS("data/results/pain_prospective_all_binarized_4.rds")
+binarized_results_mgh = readRDS("data/results/pain_prospective_mgh_binarized_4.rds")
+binarized_results_nsmc = readRDS("data/results/pain_prospective_nsmc_binarized_4.rds")
+binarized_results_bwh = readRDS("data/results/pain_prospective_bwh_binarized_4.rds")
+binarized_results_nwh = readRDS("data/results/pain_prospective_nwh_binarized_4.rds")
+
+binarized_6_results_all = readRDS("data/results/pain_prospective_all_binarized_6.rds")
+binarized_6_results_mgh = readRDS("data/results/pain_prospective_mgh_binarized_6.rds")
+binarized_6_results_nsmc = readRDS("data/results/pain_prospective_nsmc_binarized_6.rds")
+binarized_6_results_bwh = readRDS("data/results/pain_prospective_bwh_binarized_6.rds")
+binarized_6_results_nwh = readRDS("data/results/pain_prospective_nwh_binarized_6.rds")
+
+averaged_clinician_response = lapply(processed_data$LogID, function(log_id) {
+    survey_results %>% filter(LogID==log_id) %>% select(PainDay0, PainDay1, PainDay2, PainDay3, PainDay4) %>% colMeans()
+}) %>% do.call(rbind, .)
+
+bootstrap_n = 2000
+```
+
+```{r, echo=F, results='hide'}
+# Binarized performance (NRS > 4)
+spec = seq(from=0, to=1, by=0.01)
+
+rocs = lapply(seq_len(5), function(i) {
+    roc_4 = roc(outcomes[[i]]>4,  binarized_results_mgh$pred[,i])
+    auc = ci.auc(roc_4, conf.level=0.68)
+    model_results = data.frame(
+        day = i,
+        auc = auc[2],
+        lower = auc[1],
+        upper = auc[3],
+        group="model"
+    )
+    
+    clinician_roc_4 = roc(outcomes[[i]]>4,  averaged_clinician_response[,i])
+    clinician_auc = ci.auc(clinician_roc_4, conf.level=0.68)
+    clinician_results = data.frame(
+        day = i,
+        auc = clinician_auc[2],
+        lower = clinician_auc[1],
+        upper = clinician_auc[3],
+        group="clinician"
+    )
+    
+    p_value = roc.test(roc_4, clinician_roc_4, method="delong", alternative="greater")
+    
+    results = rbind(model_results, clinician_results)
+    results$p = p_value$p.value
+    return(results)
+}) %>% do.call(rbind, .)
+
+roc_plots = lapply(seq_len(5), function(i) {
+    roc_4 = roc(outcomes[[i]]>4,  binarized_results_mgh$pred[,i])
+    roc_4_ci = ci.se(roc_4, specificities=spec, progress="text", conf.level=0.68)
+    roc_plot_data = data.frame(spec=spec, sens_low = roc_4_ci[,1], sens = roc_4_ci[,2], sens_high = roc_4_ci[,3], day=i, group="model")
+}) %>% do.call(rbind, .)
+
+roc_plots_clinician = lapply(seq_len(5), function(i) {
+    roc_4 = roc(outcomes[[i]]>4,  averaged_clinician_response[,i])
+    roc_4_ci = ci.se(roc_4, specificities=spec, progress="text", conf.level=0.68)
+    roc_plot_data = data.frame(spec=spec, sens_low = roc_4_ci[,1], sens = roc_4_ci[,2], sens_high = roc_4_ci[,3], day=i, group="clinician")
+}) %>% do.call(rbind, .)
+
+roc_plots_all = rbind(roc_plots, roc_plots_clinician)
+
+roc_plots_all$day %<>% as.factor()
+roc_plots_all$group %<>% factor(levels=c("model", "clinician"))
+rocs$group %<>% factor(levels=c("model", "clinician"))
+
+roc_plots_4 = lapply(seq_len(5), function(i) {
+    current_data = roc_plots_all %>% dplyr::filter(day==i)
+    current_rocs = rocs %>% dplyr::filter(day==i)
+    ggplot(current_data, aes(x=1-spec, y=sens)) + geom_line(aes(color=group)) +
+        geom_ribbon(aes(ymin=sens_low, ymax=sens_high, fill=group), alpha=0.5, color=NA) +
+        geom_text(aes(
+            label=sprintf("AUC %s ±%s", format(auc, nsmall=3, digits=3), format((upper-lower)/2, nsmall=3, digits=2)),
+            x=0.65,  y=0.1+0.075*(group=="model"), color=group), data=current_rocs, size=2.5) +
+        xlab("1 - Specificity") + ylab("Sensitivity") + labs(color="Predictor", fill="Predictor") +
+        ggtitle(sprintf("Postop day %d", i-1)) +
+        theme_minimal() +
+        theme(
+            legend.position = "none"
+        )
+})
+
+```
+
+```{r, echo=F, results='hide'}
+# Binarized performance (NRS > 6)
+spec = seq(from=0, to=1, by=0.01)
+
+rocs_6 = lapply(seq_len(5), function(i) {
+    roc_6 = roc(outcomes[[i]]>6,  binarized_results_mgh$pred[,i])
+    auc = ci.auc(roc_6, conf.level=0.68)
+    model_results = data.frame(
+        day = i,
+        auc = auc[2],
+        lower = auc[1],
+        upper = auc[3],
+        group="model"
+    )
+    
+    clinician_roc_6 = roc(outcomes[[i]]>6,  averaged_clinician_response[,i])
+    clinician_auc = ci.auc(clinician_roc_6, conf.level=0.68)
+    clinician_results = data.frame(
+        day = i,
+        auc = clinician_auc[2],
+        lower = clinician_auc[1],
+        upper = clinician_auc[3],
+        group="clinician"
+    )
+    
+    p_value = roc.test(roc_6, clinician_roc_6, method="delong", alternative="greater")
+    
+    results = rbind(model_results, clinician_results)
+    results$p = p_value$p.value
+    return(results)
+}) %>% do.call(rbind, .)
+
+roc_plots_6 = lapply(seq_len(5), function(i) {
+    roc_6 = roc(outcomes[,i]>6,  binarized_6_results_mgh$pred[,i])
+    roc_6_ci = ci.se(roc_6, specificities=spec, progress="text", conf.level=0.68)
+    roc_plot_data = data.frame(spec=spec, sens_low = roc_6_ci[,1], sens = roc_6_ci[,2], sens_high = roc_6_ci[,3], day=i, group="model")
+}) %>% do.call(rbind, .)
+
+roc_plots_clinician_6 = lapply(seq_len(5), function(i) {
+    roc_6 = roc(outcomes[,i]>6,  averaged_clinician_response[,i])
+    roc_6_ci = ci.se(roc_6, specificities=spec, progress="text", conf.level=0.68)
+    roc_plot_data = data.frame(spec=spec, sens_low = roc_6_ci[,1], sens = roc_6_ci[,2], sens_high = roc_6_ci[,3], day=i, group="clinician")
+}) %>% do.call(rbind, .)
+
+roc_plots_all_6 = rbind(roc_plots_6, roc_plots_clinician_6)
+
+roc_plots_all_6$day %<>% as.factor()
+roc_plots_all_6$group %<>% factor(levels=c("model", "clinician"))
+rocs_6$group %<>% factor(levels=c("model", "clinician"))
+
+roc_plots_6 = lapply(seq_len(5), function(i) {
+    current_data = roc_plots_all_6 %>% dplyr::filter(day==i)
+    current_rocs = rocs_6 %>% dplyr::filter(day==i)
+    ggplot(current_data, aes(x=1-spec, y=sens)) + geom_line(aes(color=group)) +
+        geom_ribbon(aes(ymin=sens_low, ymax=sens_high, fill=group), alpha=0.5, color=NA) +
+        geom_text(aes(
+            label=sprintf("AUC %s ±%s", format(auc, nsmall=3, digits=3), format((upper-lower)/2, nsmall=3, digits=2)),
+            x=0.65,  y=0.1+0.075*(group=="model"), color=group), data=current_rocs, size=2.5) +
+        xlab("1 - Specificity") + ylab("Sensitivity") + labs(color="Predictor", fill="Predictor") +
+        ggtitle(sprintf("Postop day %d", i-1)) +
+        theme_minimal() +
+        theme(
+            legend.position="none"
+        )
+})
+```
+
+```{r, echo=F, results='hide'}
+# RMSE
+bootstrap_rmse = function(x, y, bootstrap_n) {
+    pbsapply(seq_len(bootstrap_n), function(i) {
+    data.frame(x=x, y=y)[sample(length(x), length(x), replace=T),] %>% na.omit %>% (function(k) sqrt(mean((k$x - k$y)^2)))
+    }, cl=cross_platform_getcores())
+}
+
+rmse = sapply(seq_len(5), function(i) {
+    data.frame(x=results_all$pred[,i]*10, y=outcomes[[i]]) %>% na.omit %>% (function(k) sqrt(mean((k$x - k$y)^2)))
+})
+
+rmse_clinician = sapply(seq_len(5), function(i) {
+    data.frame(x=averaged_clinician_response[,i], y=outcomes[[i]]) %>% na.omit %>% (function(k) sqrt(mean((k$x - k$y)^2)))
+})
+
+rmses_ci = lapply(seq_len(5), function(i) {
+    rmse = bootstrap_rmse(results_all$pred[,i]*10, outcomes[[i]], bootstrap_n) 
+    quantiles = rmse %>% quantile(probs=c(0, 0.16, 0.25, 0.75, 0.84, 1))
+    clinician_rmse = bootstrap_rmse(averaged_clinician_response[,i], outcomes[[i]], bootstrap_n) 
+    clinician_quantiles = clinician_rmse %>% quantile(probs=c(0, 0.16, 0.25, 0.75, 0.84, 1))
+    p_value = wilcox.test(rmse, clinician_rmse, alternative="less")$p.value
+    c(quantiles, clinician_quantiles, p_value)
+}) %>% do.call(rbind, .)
+
+
+rmse_plot_data = data.frame(
+    day = seq_len(5) %>% as.factor,
+    min = rmses_ci[,2],
+    lower = rmses_ci[,3],
+    mid = rmse,
+    upper = rmses_ci[,4],
+    max = rmses_ci[,5],
+    group = "model"
+)
+
+rmse_clinician_plot_data = data.frame(
+    day = seq_len(5) %>% as.factor,
+    min = rmses_ci[,8],
+    lower = rmses_ci[,9],
+    mid = rmse_clinician,
+    upper = rmses_ci[,10],
+    max = rmses_ci[,11],
+    group = "clinician"
+)
+
+rmse_all = rbind(rmse_plot_data, rmse_clinician_plot_data)
+rmse_all$day %<>% as.factor
+rmse_all$group %<>% factor(levels=c("model", "clinician"))
+
+rmse_plot = ggplot(rmse_all, aes(x=day, y=mid)) + geom_boxplot(aes(ymin=min, middle=mid, lower=lower, upper=upper, ymax=max, fill=group), stat="identity") +
+    ylab("RMSE") + xlab("Postoperative Day") +
+    ggtitle("NRS (RMSE)") + 
+    scale_x_discrete(breaks=seq_len(5), labels=c("Day 0", "Day 1", "Day 2", "Day 3", "Day 4")) +
+    theme_minimal() +
+    theme(legend.position="none")
+
+```
+
+```{r, echo=F, results='hide'}
+# correlation
+bootstrap_correlation = function(x, y, bootstrap_n) {
+    pbsapply(seq_len(bootstrap_n), function(i) {
+    data.frame(x=x, y=y)[sample(length(x), length(x), replace=T),] %>% na.omit %>% (function(k) cor(k)[1,2])
+    }, cl=cross_platform_getcores())
+}
+
+correlation = sapply(seq_len(5), function(i) {
+    data.frame(x=results_all$pred[,i], y=outcomes[[i]]) %>% na.omit %>% (function(k) cor(k)[1,2])
+})
+
+correlation_clinician = sapply(seq_len(5), function(i) {
+    data.frame(x=averaged_clinician_response[,i], y=outcomes[[i]]) %>% na.omit %>% (function(k) cor(k)[1,2])
+})
+
+correlations_ci = lapply(seq_len(5), function(i) {
+    correlation = bootstrap_correlation(results_all$pred[,i], outcomes[[i]], bootstrap_n) 
+    quantiles = correlation %>% quantile(probs=c(0, 0.16, 0.25, 0.75, 0.84, 1))
+    clinician_correlation = bootstrap_correlation(averaged_clinician_response[,i], outcomes[[i]], bootstrap_n) 
+    clinician_quantiles = clinician_correlation %>% quantile(probs=c(0, 0.16, 0.25, 0.75, 0.84, 1))
+    p_value = wilcox.test(correlation, clinician_correlation, alternative="greater")$p.value
+    c(quantiles, clinician_quantiles, p_value)
+}) %>% do.call(rbind, .)
+
+
+correlation_plot_data = data.frame(
+    day = seq_len(5) %>% as.factor,
+    min = correlations_ci[,2],
+    lower = correlations_ci[,3],
+    mid = correlation,
+    upper = correlations_ci[,4],
+    max = correlations_ci[,5],
+    group = "model"
+)
+
+correlation_clinician_plot_data = data.frame(
+    day = seq_len(5) %>% as.factor,
+    min = correlations_ci[,8],
+    lower = correlations_ci[,9],
+    mid = correlation_clinician,
+    upper = correlations_ci[,10],
+    max = correlations_ci[,11],
+    group = "clinician"
+)
+
+correlation_all = rbind(correlation_plot_data, correlation_clinician_plot_data)
+correlation_all$day %<>% as.factor
+correlation_all$group %<>% factor(levels=c("model", "clinician"))
+
+correlation_plot = ggplot(correlation_all, aes(x=day, y=mid)) + geom_boxplot(aes(ymin=min, middle=mid, lower=lower, upper=upper, ymax=max, fill=group), stat="identity") +
+    ylab("Correlation") + xlab("Postoperative Day") +
+    ggtitle("NRS (Correlation)") + 
+    scale_x_discrete(breaks=seq_len(5), labels=c("Day 0", "Day 1", "Day 2", "Day 3", "Day 4")) +
+    theme_minimal() +
+    theme(legend.position="none")
+
+```
+
+
+```{r, echo=F, fig.width=12, fig.height=9, dpi=600}
+plot_grid(ggdraw() + draw_label("NRS > 4", fontface="bold", x=0, hjust=0) + theme(plot.margin=margin(0,0,0,7)),
+          plot_grid(plotlist=roc_plots_4, nrow=1, labels="auto"),
+          ggdraw() + draw_label("NRS > 6", fontface="bold", x=0, hjust=0) + theme(plot.margin=margin(0,0,0,7)),
+          plot_grid(plotlist=roc_plots_6, nrow=1, labels=c("f", "g", "h", "i", "j")),
+          plot_grid(
+              plot_grid(
+                  ggdraw() + draw_label("NRS (RMSE)", fontface="bold", x=0, hjust=0) + theme(plot.margin=margin(0,0,0,7)),
+                  rmse_plot + theme(plot.title=element_blank(), plot.margin = margin(15, 15, 5, 5)),
+                  ncol=1, rel_heights=c(0.1, 1), labels=c("", "k")
+              ),
+              plot_grid(
+                  ggdraw() + draw_label("NRS (correlation)", fontface="bold", x=0, hjust=0) + theme(plot.margin=margin(0,0,0,7)),
+                  correlation_plot + theme(plot.title=element_blank(), plot.margin = margin(15, 15, 5, 5)),
+                  ncol=1, rel_heights=c(0.1, 1), labels=c("", "l")
+              ),
+              get_legend(roc_plots_4[[1]] + theme(legend.position="right", legend.background = element_rect(linewidth=0.5), legend.box.margin=margin(5))),
+              nrow=1,
+              rel_widths=c(2,2,0.5)
+          ),
+          ncol=1, rel_heights=c(0.1, 1, 0.1, 1, 1))
+
+ggsave("data/figures/pain_prediction/prospective_performance.pdf", dpi=600, width=12, height=9)
+```
+

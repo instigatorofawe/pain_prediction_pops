@@ -1,0 +1,231 @@
+---
+title: "Performance metrics (retrospective)"
+output: html_notebook
+---
+
+```{r, echo=F, results='hide', warning=F, message=F}
+library(tidyverse)
+library(magrittr)
+library(survival)
+library(readxl)
+library(pROC)
+library(cowplot)
+library(flextable)
+library(gridExtra)
+library(pbapply)
+
+set.seed(0)
+
+source("src/R/functions/cross_platform_getcores.R")
+
+multisite_data = readRDS("data/multisite_data.rds")
+
+results = readRDS("data/results/pain_multisite_all.rds")
+results_mgh = readRDS("data/results/pain_multisite_mgh.rds")
+results_bwh = readRDS("data/results/pain_multisite_bwh.rds")
+results_nwh = readRDS("data/results/pain_multisite_nwh.rds")
+results_nsmc = readRDS("data/results/pain_multisite_nsmc.rds")
+
+results_binarized = readRDS("data/results/pain_multisite_all_binarized_4.rds")
+results_mgh_binarized = readRDS("data/results/pain_multisite_mgh_binarized_4.rds")
+results_bwh_binarized = readRDS("data/results/pain_multisite_bwh_binarized_4.rds")
+results_nwh_binarized = readRDS("data/results/pain_multisite_nwh_binarized_4.rds")
+results_nsmc_binarized = readRDS("data/results/pain_multisite_nsmc_binarized_4.rds")
+
+results_binarized_6 = readRDS("data/results/pain_multisite_all_binarized_6.rds")
+results_mgh_binarized_6 = readRDS("data/results/pain_multisite_mgh_binarized_6.rds")
+results_bwh_binarized_6 = readRDS("data/results/pain_multisite_bwh_binarized_6.rds")
+results_nwh_binarized_6 = readRDS("data/results/pain_multisite_nwh_binarized_6.rds")
+results_nsmc_binarized_6 = readRDS("data/results/pain_multisite_nsmc_binarized_6.rds")
+
+bootstrap_n = 2000
+```
+
+```{r, echo=F}
+spec = seq(from=0, to=1, by=0.01)
+
+rocs = lapply(seq_len(5), function(i) {
+    roc_4 = roc(multisite_data$outcomes[!multisite_data$training,i]>4,  results_binarized$pred[!multisite_data$training,i])
+    auc = ci.auc(roc_4, conf.level=0.68)
+    data.frame(
+        day = i,
+        auc = auc[2],
+        lower = auc[1],
+        upper = auc[3]
+    )
+}) %>% do.call(rbind, .)
+
+roc_plots = lapply(seq_len(5), function(i) {
+    roc_4 = roc(multisite_data$outcomes[!multisite_data$training,i]>4,  results_binarized$pred[!multisite_data$training,i])
+    roc_4_ci = ci.se(roc_4, specificities=spec, progress="text", conf.level=0.68)
+    roc_plot_data = data.frame(spec=spec, sens_low = roc_4_ci[,1], sens = roc_4_ci[,2], sens_high = roc_4_ci[,3], day=i)
+}) %>% do.call(rbind, .)
+
+roc_plots$day %<>% as.factor()
+roc_plot_4 = ggplot(roc_plots, aes(x=1-spec, y=sens)) + geom_line(aes(color=day)) +
+    geom_ribbon(aes(ymin=sens_low, ymax=sens_high, fill=day), alpha=0.3, color=NA) +
+    xlab("1 - Specificity") + ylab("Sensitivity") + labs(color="Postop Day", fill="Postop Day") +
+    ggtitle("Max pain > 4 (moderate)") +
+    scale_color_discrete(breaks=seq_len(5), labels=c("Day 0", "Day 1", "Day 2", "Day 3", "Day 4")) +
+    scale_fill_discrete(breaks=seq_len(5), labels=c("Day 0", "Day 1", "Day 2", "Day 3", "Day 4")) +
+    theme_minimal() +
+    theme(
+        legend.position = c(1,0),
+        legend.justification = c(1,0),
+        legend.box.margin = margin(5, 5, 5, 5)
+    )
+```
+
+```{r, echo=F}
+rocs_6 = lapply(seq_len(5), function(i) {
+    roc_6 = roc(multisite_data$outcomes[!multisite_data$training,i]>6,  results_binarized$pred[!multisite_data$training,i])
+    auc = ci.auc(roc_6, conf.level=0.68)
+    data.frame(
+        day = i,
+        auc = auc[2],
+        lower = auc[1],
+        upper = auc[3]
+    )
+}) %>% do.call(rbind, .)
+
+roc_plots_6 = lapply(seq_len(5), function(i) {
+    roc_6 = roc(multisite_data$outcomes[!multisite_data$training,i]>6,  results_binarized_6$pred[!multisite_data$training,i])
+    roc_6_ci = ci.se(roc_6, specificities=spec, progress="text", conf.level=0.68)
+    roc_plot_data = data.frame(spec=spec, sens_low = roc_6_ci[,1], sens = roc_6_ci[,2], sens_high = roc_6_ci[,3], day=i)
+}) %>% do.call(rbind, .)
+
+roc_plots_6$day %<>% as.factor()
+roc_plot_6 = ggplot(roc_plots_6, aes(x=1-spec, y=sens)) + geom_line(aes(color=day)) +
+    geom_ribbon(aes(ymin=sens_low, ymax=sens_high, fill=day), alpha=0.3, color=NA) +
+    xlab("1 - Specificity") + ylab("Sensitivity") + labs(color="Postop day", fill="Postop day") +
+    scale_color_discrete(breaks=seq_len(5), labels=c("Day 0", "Day 1", "Day 2", "Day 3", "Day 4")) +
+    scale_fill_discrete(breaks=seq_len(5), labels=c("Day 0", "Day 1", "Day 2", "Day 3", "Day 4")) +
+    ggtitle("Max pain > 6 (severe)") +
+    theme_minimal() +
+    theme(
+        legend.position = c(1,0),
+        legend.justification = c(1,0),
+        legend.box.margin = margin(5, 5, 5, 5)
+    )
+```
+
+```{r, echo=F}
+# Correlation
+bootstrap_correlation = function(x, y, bootstrap_n) {
+    pbsapply(seq_len(bootstrap_n), function(i) {
+    data.frame(x=x, y=y)[sample(length(x), length(x), replace=T),] %>% na.omit %>% (function(k) cor(k)[1,2])
+    }, cl=cross_platform_getcores())
+}
+
+correlation = sapply(seq_len(5), function(i) {
+    data.frame(results$pred[!multisite_data$training,i], multisite_data$outcomes[!multisite_data$training,i]) %>% na.omit %>% (function(k) cor(k)[1,2])
+})
+
+correlations_ci = lapply(seq_len(5), function(i) {
+    bootstrap_correlation(results$pred[!multisite_data$training,i], multisite_data$outcomes[!multisite_data$training,i], bootstrap_n) %>% quantile(probs=c(0, 0.16, 0.25, 0.75, 0.84, 1))
+}) %>% do.call(rbind, .)
+
+correlation_plot_data = data.frame(
+    day = seq_len(5) %>% as.factor,
+    min = correlations_ci[,2],
+    lower = correlations_ci[,3],
+    mid = correlation,
+    upper = correlations_ci[,4],
+    max = correlations_ci[,5]
+)
+
+correlation_plot = ggplot(correlation_plot_data, aes(x=day, y=mid)) + geom_boxplot(aes(ymin=min, middle=mid, lower=lower, upper=upper, ymax=max, fill=day), stat="identity") +
+    ylab("Correlation") + xlab("Postoperative Day") +
+    ggtitle("Correlation") + 
+    scale_x_discrete(breaks=seq_len(5), labels=c("Day 0", "Day 1", "Day 2", "Day 3", "Day 4")) +
+    coord_cartesian(ylim=c(0, 1)) +
+    theme_minimal() +
+    theme(legend.position="none") 
+```
+
+```{r, echo=F}
+# rmse
+bootstrap_rmse = function(x, y, bootstrap_n) {
+    pbsapply(seq_len(bootstrap_n), function(i) {
+    data.frame(x=x, y=y)[sample(length(x), length(x), replace=T),] %>% na.omit %>% (function(k) sqrt(mean((k$x - k$y)^2)))
+    }, cl=cross_platform_getcores())
+}
+
+rmse = sapply(seq_len(5), function(i) {
+    data.frame(x=results$pred[!multisite_data$training,i]*10, y=multisite_data$outcomes[!multisite_data$training,i]) %>% na.omit %>% (function(k) sqrt(mean((k$x - k$y)^2)))
+})
+
+rmses_ci = lapply(seq_len(5), function(i) {
+    bootstrap_rmse(results$pred[!multisite_data$training,i]*10, multisite_data$outcomes[!multisite_data$training,i], bootstrap_n) %>% quantile(probs=c(0, 0.16, 0.25, 0.75, 0.84, 1))
+}) %>% do.call(rbind, .)
+
+rmse_plot_data = data.frame(
+    day = seq_len(5) %>% as.factor,
+    min = rmses_ci[,2],
+    lower = rmses_ci[,3],
+    mid = rmse,
+    upper = rmses_ci[,4],
+    max = rmses_ci[,5]
+)
+
+rmse_plot = ggplot(rmse_plot_data, aes(x=day, y=mid)) + geom_boxplot(aes(ymin=min, middle=mid, lower=lower, upper=upper, ymax=max, fill=day), stat="identity") +
+    ylab("RMSE (NRS)") + xlab("Postoperative Day") +
+    ggtitle("RMSE") + 
+    scale_x_discrete(breaks=seq_len(5), labels=c("Day 0", "Day 1", "Day 2", "Day 3", "Day 4")) +
+    theme_minimal() +
+    theme(legend.position="none")
+
+```
+
+
+```{r, echo=F}
+# Performance table
+performance_table = data.frame(
+    day = seq_len(5) - 1,
+    auc_4 = sapply(seq_len(5), function(i) {
+        sprintf(
+            "%s ±%s", 
+            format(rocs$auc[i], digits=3, nsmall=3),
+            format((rocs$upper[i]-rocs$lower[i])/2, digits=1, nsmall=3))
+    }),
+    auc_6 = sapply(seq_len(5), function(i) {
+        sprintf(
+            "%s ±%s", 
+            format(rocs_6$auc[i], digits=3, nsmall=3),
+            format((rocs_6$upper[i]-rocs_6$lower[i])/2, digits=1, nsmall=3))
+    }),
+    rmse = sapply(seq_len(5), function(i) {
+        sprintf(
+            "%s ±%s",
+            format(rmse[i], digits=3, nsmall=3),
+            format((rmse_plot_data$max[i]-rmse_plot_data$min[i])/2, digits=2, nsmall=3))
+    }),
+    correlation = sapply(seq_len(5), function(i) {
+        sprintf(
+            "%s ±%s",
+            format(correlation[i], digits=3, nsmall=3),
+            format((correlation_plot_data$max[i]-correlation_plot_data$min[i])/2, digits=1, nsmall=3)
+        )
+    })
+)
+
+colnames(performance_table) = c("Postop Day", "Max Pain > 4 (AUC)", "Max Pain > 6 (AUC)", "NRS (RMSE)", "NRS (Correlation)")
+
+flextable(performance_table) %>% set_table_properties(layout="autofit", width=1)
+```
+
+```{r, echo=F, fig.width=8, fig.height=10}
+# Composite figure
+plot_grid(
+    plot_grid(
+        roc_plot_4, roc_plot_6,
+        rmse_plot, correlation_plot,
+        nrow = 2, labels="auto"
+    ),
+    tableGrob(performance_table, rows=NULL, theme=ttheme_minimal()), labels=c("", "e"),
+    nrow=2, rel_heights=c(7, 2)
+)
+
+ggsave("data/figures/pain_prediction/retrospective_performance.pdf", dpi=300, width=8, height=10)
+```
+

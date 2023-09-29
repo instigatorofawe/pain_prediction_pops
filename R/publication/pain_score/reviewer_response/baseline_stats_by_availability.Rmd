@@ -1,0 +1,343 @@
+---
+title: "Baseline stats by outcome availability"
+output: word_document
+---
+
+```{r, echo=F, results='hide', message=F, warning=F}
+# Load retrospective data
+library(tidyverse)
+library(magrittr)
+library(flextable)
+library(readxl)
+
+prelude_opioid_naive = read.csv("data/prelude_opioid_naive.csv")
+combined_data = readRDS("data/multisite_data.rds")
+# Non MGH data`
+all_data = readRDS("data/all_data.rds")
+demographic_data = read_excel("data/pain_prediction/other_site/pain_prediction_processed_data.xlsx")
+opioid_naive = read.csv("data/pain_prediction/other_site/other_site_opioid_naive.csv")
+
+mgh_data = all_data %>% 
+    left_join(prelude_opioid_naive, by=c("log_id"="LogID")) %>%
+    transmute(log_id=log_id, sex=gender, height=height, weight=weight, age=age, race=race,
+              asa_status=asa_status, surgery_service=surgery_service, inpatient=inpatient_vs_ambulatory, elixhauser=elixhauser, location="MGH",
+              opioid_naive = OpioidNaive)
+
+multisite_data = demographic_data %>%
+    left_join(opioid_naive, by="LogID") %>%
+    transmute(log_id = LogID, sex = SexDSC, height=HeightCM/2.54, weight = WeightKG, age=Age, race=Race,
+              asa_status=ASAScoreCD, surgery_service=ServiceDSC, inpatient=(InptVAmb=="Inpatient")*1, elixhauser=ELIX, location=LocationAbbrev,
+              opioid_naive = OpioidNaive)
+
+combined_table = rbind(mgh_data, multisite_data)
+combined_table %<>% replace_na(list(race="Other", inpatient=2, opioid_naive=1))
+
+valid = apply(!is.na(combined_data$outcomes), 1, any)
+
+combined_table = combined_table[valid,]
+
+prospective_data = readRDS("data/pain_prediction/prospective_data.rds")
+survey_results = read_excel("data/pain_prediction/cleaned_survey_results.xlsx")
+processed_data = read_excel("data/pain_prediction/pain_prediction_processed_data.xlsx")
+icd_codes = read_excel("data/pain_prediction/token_icds.xlsx")
+cpt_codes = read_excel("data/pain_prediction/token_cpts.xlsx")
+opioid_naive = read.csv("data/prospective_opioid_naive.csv")
+
+# asa = read_excel("data/pain_prediction/cohortWithASA.xlsx")
+# processed_data %<>% dplyr::left_join(asa, by="LogID")
+
+unique_counts = function(x) sapply(unique(x), function(y) sum(x==y)) %>% sort(decreasing=T)
+outcomes = combined_data$outcomes[valid,]
+prospective_outcomes = processed_data %>% dplyr::select(PostopPainDay0, PostopPainDay1, PostopPainDay2, PostopPainDay3, PostopPainDay4)
+prospective_has_outcomes = apply(prospective_outcomes, 1, function(x) any(!is.na(x)))
+prospective_outcomes = prospective_outcomes[prospective_has_outcomes,]
+
+prospective_table = processed_data[prospective_has_outcomes,]
+prospective_table %<>% dplyr::left_join(opioid_naive, by="LogID")
+```
+
+```{r, echo=F}
+baseline_stats = function(combined_table, prospective_table) {
+    format_percentage = function(x, n=2) {
+        str_c("(", format(x, digits=n, nsmall=n), ")")
+    }
+    format_count = function(x) {
+        format(x, big.mark=",")
+    }
+    format_mean = function(x, n=2) {
+        format(x, digits=n, nsmall=n)
+    }
+    format_iqr = function(x, n=2) {
+        sprintf("(%s, %s)",
+                format(quantile(x, probs=0.25, na.rm=T), digits=n, nsmall=n),
+                format(quantile(x, probs=0.75, na.rm=T), digits=n, nsmall=n))
+    }
+    pad = function(x, y) {
+        c(y, rep(NA, length(x)-length(y)))
+    }
+    
+    n = dim(combined_table)[1]
+    
+    result = data.frame(
+        statistic = c(
+            "Total patients",
+                    "\tMGH",
+            "\tBWH",
+            "\tNSMC",
+            "\tNWH",
+            "Demographics",
+            "\tAge, mean (SD) years",
+            "\tGender",
+            "\t\tMale",
+            "\t\tFemale",
+            "\tRace",
+            "\t\tWhite",
+            "\t\tBlack",
+            "\t\tHispanic",
+            "\t\tAsian",
+            "\t\tOther",
+            "\tHeight, mean (SD) m",
+            "\tWeight, mean (SD) kg",
+            "Opioid naivety",
+            "Clinical characteristics",
+            "\tASA",
+            "\t\tI",
+            "\t\tII",
+            "\t\tIII",
+            "\t\tIV",
+            "\tAmbulatory surgery",
+            "\tInpatient surgery",
+            "Elixhauser comorbidity index, median (IQR)",
+            "Surgical service",
+            "\tOrthopedic Surgery",
+            "\tGeneral Surgery",
+            "\tUrology",
+            "\tGynecology",
+            "\tThoracic Surgery",
+            "\tNeurosurgery",
+            "\tSurgical Oncology",
+            "\tOther"
+        )
+    )
+    
+    result$count = pad(
+        result$statistic,
+        c( 
+            format_count(n),
+            format_count(sum(combined_table$location=="MGH")),
+            format_count(sum(combined_table$location=="BWH")),
+            format_count(sum(combined_table$location=="NWH")),
+            format_count(sum(combined_table$location=="NSMC")),
+            NA,
+            format_mean(mean(combined_table$age,na.rm=T), 1),
+            NA,
+            format_count(sum(combined_table$sex == "Male", na.rm=T)),
+            format_count(sum(combined_table$sex == "Female", na.rm=T)),
+            NA,
+            format_count(sum(combined_table$race == "White", na.rm=T)),
+            format_count(sum(combined_table$race == "Black", na.rm=T)),
+            format_count(sum(combined_table$race == "Hispanic", na.rm=T)),
+            format_count(sum(combined_table$race == "Asian", na.rm=T)),
+            format_count(sum(combined_table$race == "Other", na.rm=T)),
+            format_mean(mean(combined_table$height, na.rm=T) * 0.0254),
+            format_mean(mean(combined_table$weight, na.rm=T)),
+            format_count(sum(combined_table$opioid_naive, na.rm=T)),
+            NA,
+            NA,
+            format_count(sum(combined_table$asa_status==1, na.rm=T)),
+            format_count(sum(combined_table$asa_status==2, na.rm=T)),
+            format_count(sum(combined_table$asa_status==3, na.rm=T)),
+            format_count(sum(combined_table$asa_status==4, na.rm=T)),
+            format_count(sum(combined_table$inpatient==0, na.rm=T)),
+            format_count(sum(combined_table$inpatient==1, na.rm=T)),
+            format_mean(median(combined_table$elixhauser, na.rm=T), n=1),
+            NA,
+            format_count(sum(combined_table$surgery_service=="Orthopedic Surgery", na.rm=T)),
+            format_count(sum(combined_table$surgery_service=="General Surgery", na.rm=T)),
+            format_count(sum(combined_table$surgery_service=="Urology", na.rm=T)),
+            format_count(sum(combined_table$surgery_service=="Gynecology", na.rm=T)),
+            format_count(sum(combined_table$surgery_service=="Thoracic Surgery", na.rm=T)),
+            format_count(sum(combined_table$surgery_service=="Neurosurgery", na.rm=T)),
+            format_count(sum(combined_table$surgery_service=="Surgical Oncology", na.rm=T)),
+            format_count(sum(!is.element(combined_table$surgery_service, c("Orthopedic Surgery", "General Surgery", "Urology", "Gynecology", "Thoracic Surgery", "Neurosurgery", "Surgical Oncology")), na.rm=T))
+        )
+    )
+    
+    result$percentage = pad(
+        result$statistic,
+        c(
+            "(100.0)",
+            format_percentage(sum(combined_table$location=="MGH")/n*100),
+            format_percentage(sum(combined_table$location=="BWH")/n*100),
+            format_percentage(sum(combined_table$location=="NWH")/n*100),
+            format_percentage(sum(combined_table$location=="NSMC")/n*100),
+            NA,
+            format_percentage(sd(combined_table$age,na.rm=T), 1),
+            NA,
+            format_percentage(sum(combined_table$sex=="Male",na.rm=T)/n*100),
+            format_percentage(sum(combined_table$sex=="Female",na.rm=T)/n*100),
+            NA,
+            format_percentage(sum(combined_table$race=="White",na.rm=T)/n*100),
+            format_percentage(sum(combined_table$race=="Black",na.rm=T)/n*100),
+            format_percentage(sum(combined_table$race=="Hispanic",na.rm=T)/n*100),
+            format_percentage(sum(combined_table$race=="Asian",na.rm=T)/n*100),
+            format_percentage(sum(combined_table$race=="Other",na.rm=T)/n*100),
+            format_percentage(sd(combined_table$height, na.rm=T) * 0.0254),
+            format_percentage(sd(combined_table$weight, na.rm=T)),
+            format_percentage(sum(combined_table$opioid_naive, na.rm=T)/n*100),
+            NA,
+            NA,
+            format_percentage(sum(combined_table$asa_status==1, na.rm=T)/n*100),
+            format_percentage(sum(combined_table$asa_status==2, na.rm=T)/n*100),
+            format_percentage(sum(combined_table$asa_status==3, na.rm=T)/n*100),
+            format_percentage(sum(combined_table$asa_status==4, na.rm=T)/n*100),
+            format_percentage(sum(combined_table$inpatient==0, na.rm=T)/n*100),
+            format_percentage(sum(combined_table$inpatient==1, na.rm=T)/n*100),
+            format_iqr(combined_table$elixhauser, n=1),
+            NA,
+            format_percentage(sum(combined_table$surgery_service=="Orthopedic Surgery", na.rm=T)/n*100),
+            format_percentage(sum(combined_table$surgery_service=="General Surgery", na.rm=T)/n*100),
+            format_percentage(sum(combined_table$surgery_service=="Urology", na.rm=T)/n*100),
+            format_percentage(sum(combined_table$surgery_service=="Gynecology", na.rm=T)/n*100),
+            format_percentage(sum(combined_table$surgery_service=="Thoracic Surgery", na.rm=T)/n*100),
+            format_percentage(sum(combined_table$surgery_service=="Neurosurgery", na.rm=T)/n*100),
+            format_percentage(sum(combined_table$surgery_service=="Surgical Oncology", na.rm=T)/n*100),
+            format_percentage(sum(!is.element(combined_table$surgery_service, c("Orthopedic Surgery", "General Surgery", "Urology", "Gynecology", "Thoracic Surgery", "Neurosurgery", "Surgical Oncology")), na.rm=T)/n*100)
+        )
+    )
+    
+    result$prospective = pad(
+        result$statistic,
+        c(
+            format_count(dim(prospective_table)[1]),
+            format_count(dim(prospective_table)[1]),
+            0,
+            0,
+            0,
+            NA,
+            format_mean(mean(prospective_table$Age), 1),
+            NA,
+            format_count(sum(prospective_table$SexDSC=="Male")),
+            format_count(sum(prospective_table$SexDSC=="Female")),
+            NA,
+            format_count(sum(prospective_table$Race=="White")),
+            format_count(sum(prospective_table$Race=="Black")),
+            format_count(sum(prospective_table$Race=="Hispanic")),
+            format_count(sum(prospective_table$Race=="Asian")),
+            format_count(sum(prospective_table$Race=="Other")),
+            format_mean(mean(prospective_table$HeightCM/100)),
+            format_mean(mean(prospective_table$WeightKG)),
+            format_count(sum(prospective_table$OpioidNaive)),
+            NA,
+            NA,
+            format_count(sum(prospective_table$ASAScoreCD==1)),
+            format_count(sum(prospective_table$ASAScoreCD==2)),
+            format_count(sum(prospective_table$ASAScoreCD==3)),
+            format_count(sum(prospective_table$ASAScoreCD==4)),
+            format_count(0),
+            format_count(dim(prospective_table)[1]),
+            format_mean(median(prospective_table$ELIX), 1),
+            NA,
+            format_count(sum(prospective_table$ServiceDSC=="Orthopedic Surgery")),
+            format_count(sum(prospective_table$ServiceDSC=="General Surgery")),
+            format_count(sum(prospective_table$ServiceDSC=="Urology")),
+            format_count(sum(prospective_table$ServiceDSC=="Gynecology")),
+            format_count(sum(prospective_table$ServiceDSC=="Thoracic Surgery")),
+            format_count(sum(prospective_table$ServiceDSC=="Neurosurgery")),
+            format_count(sum(prospective_table$ServiceDSC=="Surgical Oncology")),
+            format_count(
+                sum(!is.element(
+                    prospective_table$ServiceDSC,
+                    c("Orthopedic Surgery", "General Surgery", "Urology", "Gynecology", "Thoracic Surgery", "Neurosurgery", "Surgical Oncology")
+                ))
+            )
+            
+        )
+    )
+    
+    result$prospective_percentage = pad(
+        result$statistic,
+        c(
+            format_percentage(100),
+            format_percentage(100),
+            format_percentage(0),
+            format_percentage(0),
+            format_percentage(0),
+            NA,
+            format_percentage(sd(prospective_table$Age),1),
+            NA,
+            format_percentage(sum(prospective_table$SexDSC=="Male")/dim(prospective_table)[1]*100),
+            format_percentage(sum(prospective_table$SexDSC=="Female")/dim(prospective_table)[1]*100),
+            NA,
+            format_percentage(sum(prospective_table$Race=="White")/dim(prospective_table)[1]*100),
+            format_percentage(sum(prospective_table$Race=="Black")/dim(prospective_table)[1]*100),
+            format_percentage(sum(prospective_table$Race=="Hispanic")/dim(prospective_table)[1]*100),
+            format_percentage(sum(prospective_table$Race=="Asian")/dim(prospective_table)[1]*100),
+            format_percentage(sum(prospective_table$Race=="Other")/dim(prospective_table)[1]*100),
+            format_percentage(sd(prospective_table$HeightCM/100)),
+            format_percentage(sd(prospective_table$WeightKG)),
+            format_percentage(sum(prospective_table$OpioidNaive)/dim(prospective_table)[1]*100),
+            NA,
+            NA,
+            format_percentage(sum(prospective_table$ASAScoreCD==1)/dim(prospective_table)[1]*100),
+            format_percentage(sum(prospective_table$ASAScoreCD==2)/dim(prospective_table)[1]*100),
+            format_percentage(sum(prospective_table$ASAScoreCD==3)/dim(prospective_table)[1]*100),
+            format_percentage(sum(prospective_table$ASAScoreCD==4)/dim(prospective_table)[1]*100),
+            format_percentage(0),
+            format_percentage(100),
+            format_iqr(prospective_table$ELIX, 1),
+            NA,
+            format_percentage(sum(prospective_table$ServiceDSC=="Orthopedic Surgery")/dim(prospective_table)[1]*100),
+            format_percentage(sum(prospective_table$ServiceDSC=="General Surgery")/dim(prospective_table)[1]*100),
+            format_percentage(sum(prospective_table$ServiceDSC=="Urology")/dim(prospective_table)[1]*100),
+            format_percentage(sum(prospective_table$ServiceDSC=="Gynecology")/dim(prospective_table)[1]*100),
+            format_percentage(sum(prospective_table$ServiceDSC=="Thoracic Surgery")/dim(prospective_table)[1]*100),
+            format_percentage(sum(prospective_table$ServiceDSC=="Neurosurgery")/dim(prospective_table)[1]*100),
+            format_percentage(sum(prospective_table$ServiceDSC=="Surgical Oncology")/dim(prospective_table)[1]*100),
+            format_percentage(
+                sum(!is.element(
+                    prospective_table$ServiceDSC,
+                    c("Orthopedic Surgery", "General Surgery", "Urology", "Gynecology", "Thoracic Surgery", "Neurosurgery", "Surgical Oncology")
+                ))/dim(prospective_table)[1]*100
+            )
+        )
+    )
+    
+    colnames(result) = c("Statistic", "Retrospective", "(%)", "Prospective", "(%) ")
+    
+    return(result)
+}
+```
+
+# Patients not excluded on day 0
+```{r, echo=F}
+baseline_stats(combined_table[!is.na(outcomes[,1]), ], prospective_table[!is.na(prospective_outcomes[[1]]),]) %>%
+    flextable %>% set_table_properties(layout="autofit", width=1) %>% vline_left %>% vline_right
+```
+
+
+# Patients not excluded on day 1
+```{r, echo=F}
+baseline_stats(combined_table[!is.na(outcomes[,2]), ], prospective_table[!is.na(prospective_outcomes[[2]]),]) %>%
+    flextable %>% set_table_properties(layout="autofit", width=1) %>% vline_left %>% vline_right
+```
+
+# Patients not excluded on day 2
+```{r, echo=F}
+baseline_stats(combined_table[!is.na(outcomes[,3]), ], prospective_table[!is.na(prospective_outcomes[[3]]),]) %>%
+    flextable %>% set_table_properties(layout="autofit", width=1) %>% vline_left %>% vline_right
+```
+
+
+# Patients not excluded on day 3
+```{r, echo=F}
+baseline_stats(combined_table[!is.na(outcomes[,4]), ], prospective_table[!is.na(prospective_outcomes[[4]]),]) %>%
+    flextable %>% set_table_properties(layout="autofit", width=1) %>% vline_left %>% vline_right
+```
+
+
+# Patients not excluded on day 4
+```{r, echo=F}
+baseline_stats(combined_table[!is.na(outcomes[,5]), ], prospective_table[!is.na(prospective_outcomes[[5]]),]) %>%
+    flextable %>% set_table_properties(layout="autofit", width=1) %>% vline_left %>% vline_right
+```

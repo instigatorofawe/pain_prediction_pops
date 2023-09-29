@@ -1,0 +1,17 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+.DS_store
+/data
+/.idea
+/.vscode
+
+*.pynb_checkpoints
+*__pycache__*
+*.egg-info
+
+*.nb.html
+*.docx
+lightning_logs

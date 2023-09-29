@@ -1,0 +1,89 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+
+multisite_data = readRDS("data/multisite_data.rds")
+results = readRDS("data/results/pain_multisite_all.rds")
+results_mgh = readRDS("data/results/pain_prospective_mgh.rds")
+processed_data = read_excel("data/pain_prediction/pain_prediction_processed_data.xlsx")
+survey_results = read_excel("data/pain_prediction/cleaned_survey_results.xlsx")
+
+prospective_outcomes = processed_data %>% dplyr::select(PostopPainDay0, PostopPainDay1, PostopPainDay2, PostopPainDay3, PostopPainDay4)
+
+averaged_clinician_response = lapply(processed_data$LogID, function(log_id) {
+    survey_results %>% filter(LogID==log_id) %>% select(PainDay0, PainDay1, PainDay2, PainDay3, PainDay4) %>% colMeans()
+}) %>% do.call(rbind, .)
+```
+
+```{r, echo=F}
+pred = results$pred
+pred[pred<0] = 0
+pred[pred>1] = 1
+
+plot_data = lapply(seq_len(5), function(i) {
+    data.frame(predicted=pred[,i]*10, actual=multisite_data$outcomes[,i])
+})
+
+plots = lapply(seq_len(5), function(i) {
+    ggplot(plot_data[[i]], aes(x=predicted, y=actual)) + geom_point(alpha=0.01) + geom_smooth() + geom_abline(slope=1, color="red") +
+        coord_cartesian(xlim=c(0, 10), ylim=c(0, 10)) +
+        scale_y_continuous(breaks=seq(from=0, to=10), labels=format(seq(from=0, to=10), nsmall=1, digits=1, decimal.mark = "·")) +
+        scale_x_continuous(breaks=seq(from=0, to=10), labels=format(seq(from=0, to=10), nsmall=1, digits=1, decimal.mark = "·")) +
+        ggtitle(sprintf("Postop Day %d", i-1)) +
+        ylab("Actual Max Pain") + xlab("Predicted Max Pain")
+})
+```
+
+
+```{r, echo=F, fig.width=6.5, fig.height=5}
+plot_grid(plotlist=plots)
+
+```
+
+```{r}
+pred = results_mgh$pred
+pred[pred<0] = 0
+pred[pred>1] = 1
+
+plot_data = lapply(seq_len(5), function(i) {
+    data.frame(predicted=pred[,i]*10, actual=prospective_outcomes[[i]])
+})
+
+plots = lapply(seq_len(5), function(i) {
+    ggplot(plot_data[[i]], aes(x=predicted, y=actual)) + geom_point(alpha=0.3) + geom_smooth() + geom_abline(slope=1, color="red") +
+        coord_cartesian(xlim=c(0, 10), ylim=c(0, 10)) +
+        scale_y_continuous(breaks=seq(from=0, to=10), labels=format(seq(from=0, to=10), nsmall=1, digits=1, decimal.mark = "·")) +
+        scale_x_continuous(breaks=seq(from=0, to=10), labels=format(seq(from=0, to=10), nsmall=1, digits=1, decimal.mark = "·")) +
+        ggtitle(sprintf("Postop Day %d", i-1)) +
+        ylab("Actual Max Pain") + xlab("Predicted Max Pain") 
+})
+```
+
+```{r, echo=F, fig.width=6.5, fig.height=5}
+plot_grid(plotlist=plots)
+```
+
+```{r}
+pred = averaged_clinician_response
+
+plot_data = lapply(seq_len(5), function(i) {
+    data.frame(predicted=pred[,i], actual=prospective_outcomes[[i]])
+})
+
+plots = lapply(seq_len(5), function(i) {
+    ggplot(plot_data[[i]], aes(x=predicted, y=actual)) + geom_point(alpha=0.3) + geom_smooth() + geom_abline(slope=1, color="red") +
+        coord_cartesian(xlim=c(0, 10), ylim=c(0, 10)) +
+        scale_y_continuous(breaks=seq(from=0, to=10), labels=format(seq(from=0, to=10), nsmall=1, digits=1, decimal.mark = "·")) +
+        scale_x_continuous(breaks=seq(from=0, to=10), labels=format(seq(from=0, to=10), nsmall=1, digits=1, decimal.mark = "·")) +
+        ggtitle(sprintf("Postop Day %d", i-1)) +
+        ylab("Actual Max Pain") + xlab("Predicted Max Pain") 
+})
+```
+
+```{r, echo=F, fig.width=6.5, fig.height=5}
+plot_grid(plotlist=plots)
+```
